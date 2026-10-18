@@ -18,6 +18,8 @@ English | [中文](README_CN.md) | [日本語](README_JA.md)
 
 </div>
 
+> **This fork adds:** grouped account cards, local quality inspection, account scheduling switches, capacity metrics and optional quality-based routing. [Usage and limits](#account-quality-workspace).
+
 ## ⚠️ Important Notice
 
 Please read the following carefully before using this project:
@@ -160,6 +162,7 @@ Sub2API is an AI API gateway platform designed to distribute and manage API quot
 ## Features
 
 - **Multi-Account Management** - Support multiple upstream account types (OAuth, API Key)
+- **Account Quality Workspace** - Grouped account cards, local capability checks, capacity metrics and per-group quality weighting ([Guide](#account-quality-workspace))
 - **API Key Distribution** - Generate and manage API Keys for users
 - **Precise Billing** - Token-level usage tracking and cost calculation
 - **Smart Scheduling** - Intelligent account selection with sticky sessions
@@ -169,6 +172,57 @@ Sub2API is an AI API gateway platform designed to distribute and manage API quot
 - **Admin Dashboard** - Web interface for monitoring and management
 - **Composite Groups** - Admin routing layer that resolves requested models to concrete providers for multi-provider groups ([Operator Guide](docs/COMPOSITE_GROUPS.md))
 - **External System Integration** - Embed external systems (e.g. ticketing) via iframe to extend the admin dashboard
+
+## Account Quality Workspace
+
+This fork adds a grouped account workspace at **Admin → Accounts** (`/admin/accounts`). It combines local capability checks, production metrics and optional quality-based routing. The original account list remains available.
+
+| Area | Implemented behavior |
+| --- | --- |
+| Grouped account cards | Left-aligned group names, independent pagination, search, platform/status filters, sorting and collapse controls. Accounts can appear in multiple groups; bulk selection deduplicates by account ID. |
+| Scheduling and capacity | Per-account scheduling switches use the original scheduling API and synchronize across all groups. Capacity shows current concurrency / limit, plus configured quotas, window costs, session and RPM limits. |
+| Local candy checks | The fixed problem accepts only a final answer of **21**. A correct answer triggers a randomized candy variant with a locally computed answer; wrong fixed answers receive up to two confirmation attempts on the same account. |
+| Additional evidence | Optional ModelTrace checks use an embedded reference bank and three challenges. Short, medium and long context checks use synthetic records with programmatically verified answers. |
+| Metrics and scoring | Display TTFT P50/P95, cache token read fraction, observed success rate, capability results, sample counts and score explanations. Missing evidence stays unknown rather than scoring zero. |
+| Scheduled inspection | Configurable per-group interval, daily request budget and round size; at most two accounts are tested concurrently. Round leases prevent overlap; history, cancellation and restart recovery are included. |
+| Quality-based routing | Manual, observe and automatic modes. Automatic mode affects real account selection within the matching group/model/effort/tier/endpoint, with smooth weight changes, exploration, session-binding safeguards, diagnostics and rollback. |
+
+### Start using the workspace
+
+1. Open **Admin → Accounts** and use the grouped card view. Edit, connectivity testing and bulk actions remain available.
+2. Open **Inspection settings** on a group. Set the model, reasoning effort, service tier and protocol supported by its upstream accounts.
+3. Run a manual inspection and inspect the saved answers, errors and supporting evidence. Network, authentication, balance, rate-limit and incomplete-response errors are recorded separately from wrong answers.
+4. Set a daily budget before enabling scheduled inspection. Choose automatic quality weighting separately when you want scores to influence routing; inspection and automatic routing have independent controls.
+5. Use the scheduling switch to stop an account from receiving new selections. This is an **account-wide** setting across its groups. Refresh the page data to update capacity metrics.
+
+New-group defaults:
+
+| Setting | Default |
+| --- | --- |
+| Scheduled inspection | Disabled; 15-minute interval when enabled |
+| Routing mode | Observe |
+| Daily budget | 200 upstream requests per group |
+| Accounts per round | Up to 50 |
+| Score weights | Capability 40 / TTFT 25 / cache 15 / stability 20 |
+| ModelTrace and context checks | Disabled; optional |
+
+Supported probe protocols are OpenAI Responses, OpenAI Chat Completions, Anthropic Messages and Gemini generateContent. Native Gemini probes currently require unspecified reasoning effort and the default service tier. Account/provider compatibility still depends on the configured upstream.
+
+### Reading the results
+
+- Evaluation and scoring run locally without calling the Manxue AI evaluation API. **Probe requests still reach the selected upstream account and consume its quota.** Budgets count requests, not currency; retries and optional checks add requests.
+- Business metrics use a 24-hour window. TTFT scoring needs at least 30 timing samples; capability scoring needs at least three independent fixed-problem results within one hour. Scheduled reuse of a recent result does not count as a new independent sample; manual retesting sends new requests.
+- Cache read fraction is a token ratio derived from upstream-reported usage, not the percentage of requests that hit cache. Suggested shares are ranking guidance rather than guaranteed traffic percentages.
+- Random variants, context checks and ModelTrace provide evidence of inconsistencies. A pass or a fingerprint candidate is **not proof of model identity or a guarantee of unchanged capability**. ModelTrace supports only models in its reference bank.
+- Automatic weighting preserves the existing admission, quota, priority and required conversation-binding rules. A scope mismatch or stale quality snapshot falls back to native scheduling. Selecting manual or observe mode exits automatic quality weighting.
+
+### Upgrade and documentation
+
+To deploy these changes, build this repository's `main` branch using [Build from Source](#method-4-build-from-source). Back up the database before upgrading. Migrations **246–248** add quality policies, inspection runs/results, group weights and error-scope fields. Automatic inspection and automatic routing remain opt-in; the feature does not replace account credentials or global priorities.
+
+- [Detailed usage and implementation notes](docs/ACCOUNT_QUALITY_LOCAL.md) (Chinese)
+- [Validation record and known limitations](docs/ACCOUNT_QUALITY_COMPLETION_AUDIT.md) (Chinese)
+- [Candy and ModelTrace source attribution and licenses](docs/ACCOUNT_QUALITY_LICENSES.md)
 
 ## Ecosystem
 
@@ -462,8 +516,9 @@ Build and run from source code for development or customization.
 
 #### Prerequisites
 
-- Go 1.21+
-- Node.js 18+
+- Go 1.27.2 (see `backend/go.mod`)
+- Node.js 20+
+- pnpm 9
 - PostgreSQL 15+
 - Redis 7+
 
@@ -471,15 +526,15 @@ Build and run from source code for development or customization.
 
 ```bash
 # 1. Clone the repository
-git clone https://github.com/Wei-Shaw/sub2api.git
+git clone https://github.com/hutututtt/sub2api.git
 cd sub2api
 
 # 2. Install pnpm (if not already installed)
-npm install -g pnpm
+npm install -g pnpm@9
 
 # 3. Build frontend
 cd frontend
-pnpm install
+pnpm install --frozen-lockfile
 pnpm run build
 # Output will be in ../backend/internal/web/dist/
 
