@@ -1,24 +1,24 @@
 <template>
-  <div class="relative">
+  <div class="relative min-w-0 max-w-full">
     <!-- Admin: Full version badge with dropdown -->
     <template v-if="isAdmin">
       <button
         @click="toggleDropdown"
-        class="flex items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition-colors"
+        class="flex max-w-full items-center gap-1.5 rounded-lg px-2 py-1 text-xs transition-colors"
         :class="[
           hasUpdate
             ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 dark:bg-amber-900/30 dark:text-amber-400 dark:hover:bg-amber-900/50'
             : 'bg-gray-100 text-gray-600 hover:bg-gray-200 dark:bg-dark-800 dark:text-dark-400 dark:hover:bg-dark-700'
         ]"
-        :title="hasUpdate ? t('version.updateAvailable') : t('version.upToDate')"
+        :title="[currentVersion && `v${currentVersion}`, hasUpdate ? t('version.updateAvailable') : t('version.upToDate')].filter(Boolean).join(' · ')"
       >
-        <span v-if="currentVersion" class="font-medium">v{{ currentVersion }}</span>
+        <span v-if="currentVersion" class="min-w-0 truncate font-medium">v{{ compactVersion(currentVersion) }}</span>
         <span
           v-else
           class="h-3 w-12 animate-pulse rounded bg-gray-200 font-medium dark:bg-dark-600"
         ></span>
         <!-- Update indicator -->
-        <span v-if="hasUpdate" class="relative flex h-2 w-2">
+        <span v-if="hasUpdate" class="relative flex h-2 w-2 shrink-0">
           <span
             class="absolute inline-flex h-full w-full animate-ping rounded-full bg-amber-400 opacity-75"
           ></span>
@@ -80,17 +80,18 @@
             <template v-else>
               <!-- Version display - centered and prominent -->
               <div class="mb-4 text-center">
-                <div class="inline-flex items-center gap-2">
+                <div class="flex min-w-0 items-center justify-center gap-2">
                   <span
                     v-if="currentVersion"
-                    class="text-2xl font-bold text-gray-900 dark:text-white"
-                    >v{{ currentVersion }}</span
+                    class="min-w-0 truncate text-xl font-bold text-gray-900 dark:text-white"
+                    :title="`v${currentVersion}`"
+                    >v{{ compactVersion(currentVersion) }}</span
                   >
                   <span v-else class="text-2xl font-bold text-gray-400 dark:text-dark-500">--</span>
                   <!-- Show check mark when up to date -->
                   <span
                     v-if="!hasUpdate"
-                    class="flex h-5 w-5 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30"
+                    class="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-green-100 dark:bg-green-900/30"
                   >
                     <svg
                       class="h-3 w-3 text-green-600 dark:text-green-400"
@@ -105,7 +106,13 @@
                     </svg>
                   </span>
                 </div>
-                <p class="mt-1 text-xs text-gray-500 dark:text-dark-400">
+                <p
+                  v-if="currentVersion && compactVersion(currentVersion) !== currentVersion"
+                  class="mt-2 select-all break-all font-mono text-[10px] leading-relaxed text-gray-400 dark:text-dark-500"
+                >
+                  v{{ currentVersion }}
+                </p>
+                <p class="mt-1 break-words text-xs text-gray-500 dark:text-dark-400">
                   {{
                     hasUpdate
                       ? t('version.latestVersion') + ': v' + latestVersion
@@ -631,8 +638,12 @@
     </template>
 
     <!-- Non-admin: Simple static version text -->
-    <span v-else-if="version" class="text-xs text-gray-500 dark:text-dark-400">
-      v{{ version }}
+    <span
+      v-else-if="version"
+      class="block max-w-full truncate text-xs text-gray-500 dark:text-dark-400"
+      :title="`v${version}`"
+    >
+      v{{ compactVersion(version) }}
     </span>
   </div>
 </template>
@@ -672,6 +683,11 @@ const dropdownRef = ref<HTMLElement | null>(null)
 // Use store's cached version state
 const loading = computed(() => appStore.versionLoading)
 const currentVersion = computed(() => appStore.currentVersion || props.version || '')
+// Keep release/prerelease identity visible; show build metadata in the details instead.
+function compactVersion(version: string): string {
+  return version.replace(/\+.*$/, '').replace(/[.-]\d{8}T\d{6}Z$/i, '')
+}
+
 const latestVersion = computed(() => appStore.latestVersion)
 const hasUpdate = computed(() => appStore.hasUpdate)
 const releaseInfo = computed(() => appStore.releaseInfo)
