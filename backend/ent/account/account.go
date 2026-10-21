@@ -22,6 +22,10 @@ const (
 	FieldUpdatedAt = "updated_at"
 	// FieldDeletedAt holds the string denoting the deleted_at field in the database.
 	FieldDeletedAt = "deleted_at"
+	// FieldQualityConfigVersion holds the string denoting the quality_config_version field in the database.
+	FieldQualityConfigVersion = "quality_config_version"
+	// FieldQualityConfigChangedAt holds the string denoting the quality_config_changed_at field in the database.
+	FieldQualityConfigChangedAt = "quality_config_changed_at"
 	// FieldName holds the string denoting the name field in the database.
 	FieldName = "name"
 	// FieldNotes holds the string denoting the notes field in the database.
@@ -134,6 +138,8 @@ var Columns = []string{
 	FieldCreatedAt,
 	FieldUpdatedAt,
 	FieldDeletedAt,
+	FieldQualityConfigVersion,
+	FieldQualityConfigChangedAt,
 	FieldName,
 	FieldNotes,
 	FieldPlatform,
@@ -194,6 +200,10 @@ var (
 	DefaultUpdatedAt func() time.Time
 	// UpdateDefaultUpdatedAt holds the default value on update for the "updated_at" field.
 	UpdateDefaultUpdatedAt func() time.Time
+	// DefaultQualityConfigVersion holds the default value on creation for the "quality_config_version" field.
+	DefaultQualityConfigVersion int64
+	// DefaultQualityConfigChangedAt holds the default value on creation for the "quality_config_changed_at" field.
+	DefaultQualityConfigChangedAt func() time.Time
 	// NameValidator is a validator for the "name" field. It is called by the builders before save.
 	NameValidator func(string) error
 	// PlatformValidator is a validator for the "platform" field. It is called by the builders before save.
@@ -269,6 +279,16 @@ func ByUpdatedAt(opts ...sql.OrderTermOption) OrderOption {
 // ByDeletedAt orders the results by the deleted_at field.
 func ByDeletedAt(opts ...sql.OrderTermOption) OrderOption {
 	return sql.OrderByField(FieldDeletedAt, opts...).ToFunc()
+}
+
+// ByQualityConfigVersion orders the results by the quality_config_version field.
+func ByQualityConfigVersion(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldQualityConfigVersion, opts...).ToFunc()
+}
+
+// ByQualityConfigChangedAt orders the results by the quality_config_changed_at field.
+func ByQualityConfigChangedAt(opts ...sql.OrderTermOption) OrderOption {
+	return sql.OrderByField(FieldQualityConfigChangedAt, opts...).ToFunc()
 }
 
 // ByName orders the results by the name field.

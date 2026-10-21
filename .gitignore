@@ -86,6 +86,7 @@ temp/
 *.bak
 .cache/
 .dev/
+.artifacts/
 .serena/
 
 # ===================
@@ -152,6 +153,7 @@ docs/screenshots/*
 .serena/
 .codex/
 frontend/coverage/
+frontend/public/canvas-app/
 aicodex
 output/
 .codegraph/

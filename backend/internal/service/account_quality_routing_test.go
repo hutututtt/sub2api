@@ -14,7 +14,7 @@ func qualityRoutingFixture() (*AccountQualityService, context.Context, int64) {
 	p.Mode = "auto"
 	p.Model = "fixture-model"
 	s := NewAccountQualityService(nil, nil)
-	s.routing.Store(&accountQualityRoutingSnapshot{LoadedAt: time.Now(), Groups: map[int64]accountQualityRoutingGroup{1: {Policy: p, Weights: map[int64]accountQualityRoutingEntry{1: {Multiplier: 1.8}, 2: {Multiplier: .1, ConfirmedBad: true}, 3: {Multiplier: 2}}}}})
+	s.routing.Store(&accountQualityRoutingSnapshot{LoadedAt: time.Now(), Groups: map[int64]accountQualityRoutingGroup{1: {Policy: p, Weights: map[int64]accountQualityRoutingEntry{1: {Multiplier: 1.8, ConfigVersion: 1}, 2: {Multiplier: .1, ConfirmedBad: true, ConfigVersion: 1}, 3: {Multiplier: 2, ConfigVersion: 1}}}}})
 	ctx := WithAccountQualityRequestScope(context.Background(), AccountQualityRequestScope{Model: p.Model, Effort: p.Effort, ServiceTier: p.ServiceTier, Endpoint: p.Endpoint})
 	return s, ctx, 1
 }
@@ -77,7 +77,7 @@ func TestAccountQualityWeightedSamplingRetainsExploration(t *testing.T) {
 func TestAccountQualityModernSchedulerUsesQualityBeyondTopK(t *testing.T) {
 	q, ctx, id := qualityRoutingFixture()
 	scheduler := &defaultOpenAIAccountScheduler{service: &OpenAIGatewayService{accountQuality: q}}
-	plan := openAIAccountLoadPlan{topK: 1, candidates: []openAIAccountCandidateScore{{account: &Account{ID: 1}, score: 1}, {account: &Account{ID: 2}, score: 1}}}
+	plan := openAIAccountLoadPlan{topK: 1, candidates: []openAIAccountCandidateScore{{account: &Account{QualityConfigVersion: 1, ID: 1}, score: 1}, {account: &Account{QualityConfigVersion: 1, ID: 2}, score: 1}}}
 	req := OpenAIAccountScheduleRequest{GroupID: &id, RequestedModel: "fixture-model"}
 	scheduler.applyAccountQuality(ctx, req, &plan)
 	if plan.topK != 2 || plan.candidates[0].qualityWeight <= plan.candidates[1].qualityWeight {
@@ -110,7 +110,7 @@ func TestAccountQualityScoreWeightsAreConfigurable(t *testing.T) {
 	p.ScoreWeights = AccountQualityScoreWeights{Cache: 100}
 	ttft := 3000.0
 	cache := 20.0
-	rows := []AccountQualityRow{{Requests: 50, TTFTSamples: 50, P50: &ttft, CacheRate: &cache}}
+	rows := []AccountQualityRow{{Requests: 50, TTFTSamples: 50, P50: &ttft, CacheRate: &cache, CacheSamples: 50}}
 	ScoreAccountQualityWithPolicy(rows, p)
 	if rows[0].Score == nil || math.Abs(*rows[0].Score-20) > .01 {
 		t.Fatal("configured score weights were ignored")
@@ -134,7 +134,7 @@ type qualityWeightRepo struct {
 func (r *qualityWeightRepo) Groups(context.Context) ([]AccountQualityGroup, error) {
 	return r.groups, nil
 }
-func (r *qualityWeightRepo) Rows(context.Context, int64, AccountQualityPolicy) ([]AccountQualityRow, error) {
+func (r *qualityWeightRepo) Rows(context.Context, int64, AccountQualityPolicy, ...AccountQualityObservationScope) ([]AccountQualityRow, error) {
 	return append([]AccountQualityRow(nil), r.rows...), nil
 }
 func (r *qualityWeightRepo) LoadWeights(context.Context, int64, string) (map[int64]AccountQualityStoredWeight, error) {
@@ -156,8 +156,8 @@ func TestAccountQualityWeightRefreshIsGradualAndManualModeExits(t *testing.T) {
 	}
 	first := repo.weights[1].Multiplier
 	bad := repo.weights[2].Multiplier
-	if math.Abs(first-1.15) > .001 || math.Abs(bad-.85) > .001 {
-		t.Fatalf("weight moved too quickly or wrong direction: %v %v", first, bad)
+	if math.Abs(first-1.15) > .001 || bad != .1 {
+		t.Fatalf("healthy recovery must be gradual and failures immediate: %v %v", first, bad)
 	}
 	if err := s.refreshRouting(context.Background()); err != nil {
 		t.Fatal(err)
@@ -196,7 +196,7 @@ func TestAccountQualityFullOpenAISelectionHonorsWeightsAdmissionAndRollback(t *t
 	q, ctx, g := qualityRoutingFixture()
 	cfg := newSchedulerTestSubscriptionPriorityConfig()
 	cfg.Gateway.Scheduling.LoadBatchEnabled = true
-	accounts := []Account{{ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: "active", Schedulable: true, Concurrency: 2, GroupIDs: []int64{g}}, {ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: "active", Schedulable: true, Concurrency: 2, GroupIDs: []int64{g}}, {ID: 3, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: "disabled", Schedulable: false, Concurrency: 2, GroupIDs: []int64{g}}}
+	accounts := []Account{{QualityConfigVersion: 1, ID: 1, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: "active", Schedulable: true, Concurrency: 2, GroupIDs: []int64{g}}, {QualityConfigVersion: 1, ID: 2, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: "active", Schedulable: true, Concurrency: 2, GroupIDs: []int64{g}}, {QualityConfigVersion: 1, ID: 3, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: "disabled", Schedulable: false, Concurrency: 2, GroupIDs: []int64{g}}}
 	gateway := &OpenAIGatewayService{accountQuality: q, accountRepo: schedulerTestOpenAIAccountRepo{accounts: accounts}, cache: &schedulerTestGatewayCache{}, cfg: cfg, concurrencyService: NewConcurrencyService(schedulerTestConcurrencyCache{})}
 	counts := [2]int{}
 	for n := 0; n < 400; n++ {

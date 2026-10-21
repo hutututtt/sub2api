@@ -15,6 +15,13 @@ ARG GOSUMDB=sum.golang.google.cn
 # -----------------------------------------------------------------------------
 # Stage 1: Frontend Builder
 # -----------------------------------------------------------------------------
+FROM oven/bun:1.3.14 AS canvas-builder
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY integrations/infinite-canvas/ integrations/infinite-canvas/
+RUN bun integrations/infinite-canvas/build.mjs
+
 FROM ${NODE_IMAGE} AS frontend-builder
 
 WORKDIR /app/frontend
@@ -34,6 +41,8 @@ RUN pnpm install --frozen-lockfile
 # in the image (WORKDIR /app/frontend -> resolves to /app/docs/legal/*.md).
 # Copy only that subtree to keep the build dependency minimal.
 COPY frontend/ ./
+COPY integrations/infinite-canvas/ /app/integrations/infinite-canvas/
+COPY --from=canvas-builder /app/frontend/public/canvas-app/ ./public/canvas-app/
 COPY docs/legal/ /app/docs/legal/
 RUN pnpm run build
 

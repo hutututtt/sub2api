@@ -128,6 +128,11 @@ func RegisterAdminRoutes(
 		// 邀请返利（专属用户管理）
 		registerAffiliateRoutes(admin, h)
 
+		// 推广渠道统计
+		if h.Promotion != nil {
+			registerPromotionRoutes(admin, h)
+		}
+
 		// 操作审计日志
 		registerAuditLogRoutes(admin, h, stepUpAuth)
 	}
@@ -845,6 +850,21 @@ func registerAffiliateRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
 			users.PUT("/:user_id", h.Admin.Affiliate.UpdateUserSettings)
 			users.DELETE("/:user_id", h.Admin.Affiliate.ClearUserSettings)
 		}
+	}
+}
+
+func registerPromotionRoutes(admin *gin.RouterGroup, h *handler.Handlers) {
+	promotion := admin.Group("/promotions")
+	{
+		promotion.GET("/channels", h.Promotion.ListChannels)
+		promotion.POST("/channels", h.Promotion.SaveChannel)
+		promotion.PUT("/channels/:id", h.Promotion.SaveChannel)
+		promotion.GET("/settings", h.Promotion.GetSettings)
+		promotion.PUT("/settings", h.Promotion.SaveSettings)
+		promotion.GET("/report", h.Promotion.Report)
+		promotion.GET("/details/:kind", h.Promotion.Details)
+		promotion.POST("/expenses", h.Promotion.AddExpense)
+		promotion.DELETE("/expenses/:id", h.Promotion.DeleteExpense)
 	}
 }
 

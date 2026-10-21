@@ -34,6 +34,29 @@ func (s *qualityCapacityConcurrencyStub) GetAccountConcurrencyBatch(_ context.Co
 	return map[int64]int{7: 3, 8: 0}, s.err
 }
 
+func TestQualityAccountHomepageURL(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		account *service.Account
+		want    string
+	}{
+		{name: "missing account"},
+		{name: "upstream origin", account: &service.Account{Type: service.AccountTypeAPIKey, Credentials: map[string]any{"base_url": " https://relay.example.com/api/v1/ "}}, want: "https://relay.example.com"},
+		{name: "custom port", account: &service.Account{Type: service.AccountTypeAPIKey, Credentials: map[string]any{"base_url": "http://localhost:8080/v1"}}, want: "http://localhost:8080"},
+		{name: "URL secrets excluded", account: &service.Account{Type: service.AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https://user:secret@relay.example.com/private/v1?key=secret#secret"}}, want: "https://relay.example.com"},
+		{name: "OAuth", account: &service.Account{Type: service.AccountTypeOAuth, Credentials: map[string]any{"base_url": "https://oauth.example.com/v1"}}},
+		{name: "missing URL", account: &service.Account{Type: service.AccountTypeAPIKey}},
+		{name: "non-string URL", account: &service.Account{Type: service.AccountTypeAPIKey, Credentials: map[string]any{"base_url": 42}}},
+		{name: "unsafe scheme", account: &service.Account{Type: service.AccountTypeAPIKey, Credentials: map[string]any{"base_url": "javascript:alert(1)"}}},
+		{name: "relative URL", account: &service.Account{Type: service.AccountTypeAPIKey, Credentials: map[string]any{"base_url": "/v1"}}},
+		{name: "missing host", account: &service.Account{Type: service.AccountTypeAPIKey, Credentials: map[string]any{"base_url": "https:///v1"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.want, qualityAccountHomepageURL(tc.account))
+		})
+	}
+}
+
 func TestAccountQualityCapacityPreservesQuotaSemanticsAndExcludesSecrets(t *testing.T) {
 	account := &service.Account{ID: 7, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Concurrency: 10,
 		Credentials: map[string]any{"api_key": "secret-must-not-appear"},
@@ -53,7 +76,8 @@ func TestAccountQualityCapacityPreservesQuotaSemanticsAndExcludesSecrets(t *test
 
 func TestAccountQualityCapacityBatchesOnlyPageMembersAndKeepsMissingDataUnknown(t *testing.T) {
 	admin := &qualityCapacityAdminStub{accounts: []*service.Account{
-		{ID: 7, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Concurrency: 10},
+		{ID: 7, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Concurrency: 10,
+			Credentials: map[string]any{"base_url": "https://user:secret@relay.example.com/private/v1?key=secret", "api_key": "secret-must-not-appear"}},
 		{ID: 8, Platform: service.PlatformOpenAI, Type: service.AccountTypeAPIKey, Concurrency: 4},
 	}}
 	cache := &qualityCapacityConcurrencyStub{}
@@ -66,10 +90,17 @@ func TestAccountQualityCapacityBatchesOnlyPageMembersAndKeepsMissingDataUnknown(
 	require.Equal(t, 3, *result.Items[0].Capacity.CurrentConcurrency)
 	require.Equal(t, 0, *result.Items[1].Capacity.CurrentConcurrency)
 	require.Nil(t, result.Items[2].Capacity)
+	require.Equal(t, "https://relay.example.com", result.Items[0].HomepageURL)
+	require.Empty(t, result.Items[1].HomepageURL)
+	require.Empty(t, result.Items[2].HomepageURL)
 	require.Equal(t, 100, result.Total)
 	require.Equal(t, 2, result.Page)
 	data, err := json.Marshal(result)
 	require.NoError(t, err)
+	require.Contains(t, string(data), `"homepage_url":"https://relay.example.com"`)
+	require.NotContains(t, string(data), "secret")
+	require.NotContains(t, string(data), "credentials")
+	require.NotContains(t, string(data), "/private/v1")
 	var wire struct {
 		Items []struct {
 			ID       int64
@@ -87,5 +118,42 @@ func TestAccountQualityCapacityBatchesOnlyPageMembersAndKeepsMissingDataUnknown(
 	result = h.pageWithCapacity(context.Background(), page)
 	require.Len(t, result.Items, 3)
 	require.Nil(t, result.Items[0].Capacity)
+	require.Empty(t, result.Items[0].HomepageURL)
 	require.Equal(t, "same-account", result.Items[0].Name)
+}
+
+func TestAccountQualityPageIncludesRuntimeStatus(t *testing.T) {
+	until := time.Now().Add(10 * time.Minute).UTC().Truncate(time.Second)
+	admin := &qualityCapacityAdminStub{accounts: []*service.Account{
+		{ID: 7, Status: "active", Schedulable: true, TempUnschedulableUntil: &until,
+			TempUnschedulableReason: "upstream timeout", RateLimitResetAt: &until, OverloadUntil: &until},
+		{ID: 8, Status: "error", Schedulable: true, ErrorMessage: "authentication failed"},
+	}}
+	h := NewAccountQualityHandler(nil)
+	h.SetAccountHandler(&AccountHandler{adminService: admin})
+	page := service.AccountQualityPage{Items: []service.AccountQualityRow{{ID: 7}, {ID: 8}}}
+	result := h.pageWithCapacity(context.Background(), page)
+	data, err := json.Marshal(result)
+	require.NoError(t, err)
+	var wire struct {
+		Items []struct {
+			Status       string     `json:"status"`
+			Schedulable  bool       `json:"schedulable"`
+			ErrorMessage string     `json:"error_message"`
+			Until        *time.Time `json:"temp_unschedulable_until"`
+			Reason       string     `json:"temp_unschedulable_reason"`
+			RateLimit    *time.Time `json:"rate_limit_reset_at"`
+			Overload     *time.Time `json:"overload_until"`
+		}
+	}
+	require.NoError(t, json.Unmarshal(data, &wire))
+	require.Equal(t, "active", wire.Items[0].Status)
+	require.True(t, wire.Items[0].Schedulable)
+	require.Equal(t, until, *wire.Items[0].Until)
+	require.Equal(t, "upstream timeout", wire.Items[0].Reason)
+	require.Equal(t, until, *wire.Items[0].RateLimit)
+	require.Equal(t, until, *wire.Items[0].Overload)
+	require.Equal(t, "error", wire.Items[1].Status)
+	require.Equal(t, "authentication failed", wire.Items[1].ErrorMessage)
+	require.Nil(t, wire.Items[1].Until)
 }

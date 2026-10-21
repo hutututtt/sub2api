@@ -165,6 +165,11 @@ func (r *userRepository) create(ctx context.Context, userIn *service.User, guard
 	if err := ensureEmailAuthIdentityWithClient(txCtx, txClient, created.ID, created.Email, "user_repo_create"); err != nil {
 		return err
 	}
+	if visitorHash := service.PromotionVisitorHash(ctx); visitorHash != "" {
+		if err := attachPromotionAttribution(txCtx, txAwareSQLExecutor(txCtx, r.sql, r.client), created.ID, visitorHash); err != nil {
+			return fmt.Errorf("attach promotion attribution: %w", err)
+		}
+	}
 
 	if ownedTx != nil {
 		if err := ownedTx.Commit(); err != nil {

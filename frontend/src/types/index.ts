@@ -1049,6 +1049,15 @@ export interface GeminiCredentials {
   model_mapping?: Record<string, string>
 }
 
+export type AccountStatusData = Pick<Account, 'id' | 'name' | 'schedulable'> & {
+  status: string
+} & Partial<Pick<Account,
+  'error_message' | 'temp_unschedulable_until' | 'temp_unschedulable_reason' |
+  'rate_limit_reset_at' | 'overload_until' | 'extra' |
+  'quota_used' | 'quota_limit' | 'quota_daily_used' | 'quota_daily_limit' |
+  'quota_weekly_used' | 'quota_weekly_limit'
+>>
+
 export type TempUnschedulableScope = 'account' | 'model'
 
 export interface TempUnschedulableRule {

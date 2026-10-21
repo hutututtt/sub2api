@@ -1594,7 +1594,7 @@ func (s *GatewayService) newSelectionResult(ctx context.Context, account *Accoun
 	}
 	if group, ok := ctx.Value(ctxkey.Group).(*Group); ok && group != nil {
 		scope, _ := ctx.Value(accountQualityScopeKey{}).(AccountQualityRequestScope)
-		s.accountQuality.recordRouting(ctx, &group.ID, scope.Model, hydrated.ID, "gateway_selected")
+		s.accountQuality.recordRouting(ctx, &group.ID, scope.Model, hydrated, "gateway_selected")
 	}
 	return attachSelectionProfitGate(ctx, &AccountSelectionResult{
 		Account:     hydrated,
@@ -2051,7 +2051,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 			if s.debugModelRoutingEnabled() {
 				logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] legacy routed select: group_id=%v model=%s session=%s account=%d", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), selected.ID)
 			}
-			s.accountQuality.recordRouting(ctx, groupID, requestedModel, selected.ID, "legacy_candidate")
+			s.accountQuality.recordRouting(ctx, groupID, requestedModel, selected, "legacy_candidate")
 			return selected, nil
 		}
 		logger.LegacyPrintf("service.gateway", "[ModelRouting] No routed accounts available for model=%s, falling back to normal selection", requestedModel)
@@ -2180,7 +2180,7 @@ func (s *GatewayService) selectAccountForModelWithPlatform(ctx context.Context, 
 		}
 	}
 
-	s.accountQuality.recordRouting(ctx, groupID, requestedModel, selected.ID, "legacy_candidate")
+	s.accountQuality.recordRouting(ctx, groupID, requestedModel, selected, "legacy_candidate")
 	return selected, nil
 }
 
@@ -2329,7 +2329,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 			if s.debugModelRoutingEnabled() {
 				logger.LegacyPrintf("service.gateway", "[ModelRoutingDebug] legacy mixed routed select: group_id=%v model=%s session=%s account=%d", derefGroupID(groupID), requestedModel, shortSessionHash(sessionHash), selected.ID)
 			}
-			s.accountQuality.recordRouting(ctx, groupID, requestedModel, selected.ID, "legacy_candidate")
+			s.accountQuality.recordRouting(ctx, groupID, requestedModel, selected, "legacy_candidate")
 			return selected, nil
 		}
 		logger.LegacyPrintf("service.gateway", "[ModelRouting] No routed accounts available for model=%s, falling back to normal selection", requestedModel)
@@ -2459,7 +2459,7 @@ func (s *GatewayService) selectAccountWithMixedScheduling(ctx context.Context, g
 		}
 	}
 
-	s.accountQuality.recordRouting(ctx, groupID, requestedModel, selected.ID, "legacy_candidate")
+	s.accountQuality.recordRouting(ctx, groupID, requestedModel, selected, "legacy_candidate")
 	return selected, nil
 }
 

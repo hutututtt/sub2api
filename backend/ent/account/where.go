@@ -70,6 +70,16 @@ func DeletedAt(v time.Time) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldDeletedAt, v))
 }
 
+// QualityConfigVersion applies equality check predicate on the "quality_config_version" field. It's identical to QualityConfigVersionEQ.
+func QualityConfigVersion(v int64) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldQualityConfigVersion, v))
+}
+
+// QualityConfigChangedAt applies equality check predicate on the "quality_config_changed_at" field. It's identical to QualityConfigChangedAtEQ.
+func QualityConfigChangedAt(v time.Time) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldQualityConfigChangedAt, v))
+}
+
 // Name applies equality check predicate on the "name" field. It's identical to NameEQ.
 func Name(v string) predicate.Account {
 	return predicate.Account(sql.FieldEQ(FieldName, v))
@@ -323,6 +333,86 @@ func DeletedAtIsNil() predicate.Account {
 // DeletedAtNotNil applies the NotNil predicate on the "deleted_at" field.
 func DeletedAtNotNil() predicate.Account {
 	return predicate.Account(sql.FieldNotNull(FieldDeletedAt))
+}
+
+// QualityConfigVersionEQ applies the EQ predicate on the "quality_config_version" field.
+func QualityConfigVersionEQ(v int64) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldQualityConfigVersion, v))
+}
+
+// QualityConfigVersionNEQ applies the NEQ predicate on the "quality_config_version" field.
+func QualityConfigVersionNEQ(v int64) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldQualityConfigVersion, v))
+}
+
+// QualityConfigVersionIn applies the In predicate on the "quality_config_version" field.
+func QualityConfigVersionIn(vs ...int64) predicate.Account {
+	return predicate.Account(sql.FieldIn(FieldQualityConfigVersion, vs...))
+}
+
+// QualityConfigVersionNotIn applies the NotIn predicate on the "quality_config_version" field.
+func QualityConfigVersionNotIn(vs ...int64) predicate.Account {
+	return predicate.Account(sql.FieldNotIn(FieldQualityConfigVersion, vs...))
+}
+
+// QualityConfigVersionGT applies the GT predicate on the "quality_config_version" field.
+func QualityConfigVersionGT(v int64) predicate.Account {
+	return predicate.Account(sql.FieldGT(FieldQualityConfigVersion, v))
+}
+
+// QualityConfigVersionGTE applies the GTE predicate on the "quality_config_version" field.
+func QualityConfigVersionGTE(v int64) predicate.Account {
+	return predicate.Account(sql.FieldGTE(FieldQualityConfigVersion, v))
+}
+
+// QualityConfigVersionLT applies the LT predicate on the "quality_config_version" field.
+func QualityConfigVersionLT(v int64) predicate.Account {
+	return predicate.Account(sql.FieldLT(FieldQualityConfigVersion, v))
+}
+
+// QualityConfigVersionLTE applies the LTE predicate on the "quality_config_version" field.
+func QualityConfigVersionLTE(v int64) predicate.Account {
+	return predicate.Account(sql.FieldLTE(FieldQualityConfigVersion, v))
+}
+
+// QualityConfigChangedAtEQ applies the EQ predicate on the "quality_config_changed_at" field.
+func QualityConfigChangedAtEQ(v time.Time) predicate.Account {
+	return predicate.Account(sql.FieldEQ(FieldQualityConfigChangedAt, v))
+}
+
+// QualityConfigChangedAtNEQ applies the NEQ predicate on the "quality_config_changed_at" field.
+func QualityConfigChangedAtNEQ(v time.Time) predicate.Account {
+	return predicate.Account(sql.FieldNEQ(FieldQualityConfigChangedAt, v))
+}
+
+// QualityConfigChangedAtIn applies the In predicate on the "quality_config_changed_at" field.
+func QualityConfigChangedAtIn(vs ...time.Time) predicate.Account {
+	return predicate.Account(sql.FieldIn(FieldQualityConfigChangedAt, vs...))
+}
+
+// QualityConfigChangedAtNotIn applies the NotIn predicate on the "quality_config_changed_at" field.
+func QualityConfigChangedAtNotIn(vs ...time.Time) predicate.Account {
+	return predicate.Account(sql.FieldNotIn(FieldQualityConfigChangedAt, vs...))
+}
+
+// QualityConfigChangedAtGT applies the GT predicate on the "quality_config_changed_at" field.
+func QualityConfigChangedAtGT(v time.Time) predicate.Account {
+	return predicate.Account(sql.FieldGT(FieldQualityConfigChangedAt, v))
+}
+
+// QualityConfigChangedAtGTE applies the GTE predicate on the "quality_config_changed_at" field.
+func QualityConfigChangedAtGTE(v time.Time) predicate.Account {
+	return predicate.Account(sql.FieldGTE(FieldQualityConfigChangedAt, v))
+}
+
+// QualityConfigChangedAtLT applies the LT predicate on the "quality_config_changed_at" field.
+func QualityConfigChangedAtLT(v time.Time) predicate.Account {
+	return predicate.Account(sql.FieldLT(FieldQualityConfigChangedAt, v))
+}
+
+// QualityConfigChangedAtLTE applies the LTE predicate on the "quality_config_changed_at" field.
+func QualityConfigChangedAtLTE(v time.Time) predicate.Account {
+	return predicate.Account(sql.FieldLTE(FieldQualityConfigChangedAt, v))
 }
 
 // NameEQ applies the EQ predicate on the "name" field.

@@ -67,6 +67,34 @@ func (_c *AccountCreate) SetNillableDeletedAt(v *time.Time) *AccountCreate {
 	return _c
 }
 
+// SetQualityConfigVersion sets the "quality_config_version" field.
+func (_c *AccountCreate) SetQualityConfigVersion(v int64) *AccountCreate {
+	_c.mutation.SetQualityConfigVersion(v)
+	return _c
+}
+
+// SetNillableQualityConfigVersion sets the "quality_config_version" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableQualityConfigVersion(v *int64) *AccountCreate {
+	if v != nil {
+		_c.SetQualityConfigVersion(*v)
+	}
+	return _c
+}
+
+// SetQualityConfigChangedAt sets the "quality_config_changed_at" field.
+func (_c *AccountCreate) SetQualityConfigChangedAt(v time.Time) *AccountCreate {
+	_c.mutation.SetQualityConfigChangedAt(v)
+	return _c
+}
+
+// SetNillableQualityConfigChangedAt sets the "quality_config_changed_at" field if the given value is not nil.
+func (_c *AccountCreate) SetNillableQualityConfigChangedAt(v *time.Time) *AccountCreate {
+	if v != nil {
+		_c.SetQualityConfigChangedAt(*v)
+	}
+	return _c
+}
+
 // SetName sets the "name" field.
 func (_c *AccountCreate) SetName(v string) *AccountCreate {
 	_c.mutation.SetName(v)
@@ -539,6 +567,17 @@ func (_c *AccountCreate) defaults() error {
 		v := account.DefaultUpdatedAt()
 		_c.mutation.SetUpdatedAt(v)
 	}
+	if _, ok := _c.mutation.QualityConfigVersion(); !ok {
+		v := account.DefaultQualityConfigVersion
+		_c.mutation.SetQualityConfigVersion(v)
+	}
+	if _, ok := _c.mutation.QualityConfigChangedAt(); !ok {
+		if account.DefaultQualityConfigChangedAt == nil {
+			return fmt.Errorf("ent: uninitialized account.DefaultQualityConfigChangedAt (forgotten import ent/runtime?)")
+		}
+		v := account.DefaultQualityConfigChangedAt()
+		_c.mutation.SetQualityConfigChangedAt(v)
+	}
 	if _, ok := _c.mutation.Credentials(); !ok {
 		if account.DefaultCredentials == nil {
 			return fmt.Errorf("ent: uninitialized account.DefaultCredentials (forgotten import ent/runtime?)")
@@ -591,6 +630,12 @@ func (_c *AccountCreate) check() error {
 	}
 	if _, ok := _c.mutation.UpdatedAt(); !ok {
 		return &ValidationError{Name: "updated_at", err: errors.New(`ent: missing required field "Account.updated_at"`)}
+	}
+	if _, ok := _c.mutation.QualityConfigVersion(); !ok {
+		return &ValidationError{Name: "quality_config_version", err: errors.New(`ent: missing required field "Account.quality_config_version"`)}
+	}
+	if _, ok := _c.mutation.QualityConfigChangedAt(); !ok {
+		return &ValidationError{Name: "quality_config_changed_at", err: errors.New(`ent: missing required field "Account.quality_config_changed_at"`)}
 	}
 	if _, ok := _c.mutation.Name(); !ok {
 		return &ValidationError{Name: "name", err: errors.New(`ent: missing required field "Account.name"`)}
@@ -696,6 +741,14 @@ func (_c *AccountCreate) createSpec() (*Account, *sqlgraph.CreateSpec) {
 	if value, ok := _c.mutation.DeletedAt(); ok {
 		_spec.SetField(account.FieldDeletedAt, field.TypeTime, value)
 		_node.DeletedAt = &value
+	}
+	if value, ok := _c.mutation.QualityConfigVersion(); ok {
+		_spec.SetField(account.FieldQualityConfigVersion, field.TypeInt64, value)
+		_node.QualityConfigVersion = value
+	}
+	if value, ok := _c.mutation.QualityConfigChangedAt(); ok {
+		_spec.SetField(account.FieldQualityConfigChangedAt, field.TypeTime, value)
+		_node.QualityConfigChangedAt = value
 	}
 	if value, ok := _c.mutation.Name(); ok {
 		_spec.SetField(account.FieldName, field.TypeString, value)
@@ -966,6 +1019,36 @@ func (u *AccountUpsert) UpdateDeletedAt() *AccountUpsert {
 // ClearDeletedAt clears the value of the "deleted_at" field.
 func (u *AccountUpsert) ClearDeletedAt() *AccountUpsert {
 	u.SetNull(account.FieldDeletedAt)
+	return u
+}
+
+// SetQualityConfigVersion sets the "quality_config_version" field.
+func (u *AccountUpsert) SetQualityConfigVersion(v int64) *AccountUpsert {
+	u.Set(account.FieldQualityConfigVersion, v)
+	return u
+}
+
+// UpdateQualityConfigVersion sets the "quality_config_version" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateQualityConfigVersion() *AccountUpsert {
+	u.SetExcluded(account.FieldQualityConfigVersion)
+	return u
+}
+
+// AddQualityConfigVersion adds v to the "quality_config_version" field.
+func (u *AccountUpsert) AddQualityConfigVersion(v int64) *AccountUpsert {
+	u.Add(account.FieldQualityConfigVersion, v)
+	return u
+}
+
+// SetQualityConfigChangedAt sets the "quality_config_changed_at" field.
+func (u *AccountUpsert) SetQualityConfigChangedAt(v time.Time) *AccountUpsert {
+	u.Set(account.FieldQualityConfigChangedAt, v)
+	return u
+}
+
+// UpdateQualityConfigChangedAt sets the "quality_config_changed_at" field to the value that was provided on create.
+func (u *AccountUpsert) UpdateQualityConfigChangedAt() *AccountUpsert {
+	u.SetExcluded(account.FieldQualityConfigChangedAt)
 	return u
 }
 
@@ -1508,6 +1591,41 @@ func (u *AccountUpsertOne) UpdateDeletedAt() *AccountUpsertOne {
 func (u *AccountUpsertOne) ClearDeletedAt() *AccountUpsertOne {
 	return u.Update(func(s *AccountUpsert) {
 		s.ClearDeletedAt()
+	})
+}
+
+// SetQualityConfigVersion sets the "quality_config_version" field.
+func (u *AccountUpsertOne) SetQualityConfigVersion(v int64) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetQualityConfigVersion(v)
+	})
+}
+
+// AddQualityConfigVersion adds v to the "quality_config_version" field.
+func (u *AccountUpsertOne) AddQualityConfigVersion(v int64) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.AddQualityConfigVersion(v)
+	})
+}
+
+// UpdateQualityConfigVersion sets the "quality_config_version" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateQualityConfigVersion() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateQualityConfigVersion()
+	})
+}
+
+// SetQualityConfigChangedAt sets the "quality_config_changed_at" field.
+func (u *AccountUpsertOne) SetQualityConfigChangedAt(v time.Time) *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetQualityConfigChangedAt(v)
+	})
+}
+
+// UpdateQualityConfigChangedAt sets the "quality_config_changed_at" field to the value that was provided on create.
+func (u *AccountUpsertOne) UpdateQualityConfigChangedAt() *AccountUpsertOne {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateQualityConfigChangedAt()
 	})
 }
 
@@ -2293,6 +2411,41 @@ func (u *AccountUpsertBulk) UpdateDeletedAt() *AccountUpsertBulk {
 func (u *AccountUpsertBulk) ClearDeletedAt() *AccountUpsertBulk {
 	return u.Update(func(s *AccountUpsert) {
 		s.ClearDeletedAt()
+	})
+}
+
+// SetQualityConfigVersion sets the "quality_config_version" field.
+func (u *AccountUpsertBulk) SetQualityConfigVersion(v int64) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetQualityConfigVersion(v)
+	})
+}
+
+// AddQualityConfigVersion adds v to the "quality_config_version" field.
+func (u *AccountUpsertBulk) AddQualityConfigVersion(v int64) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.AddQualityConfigVersion(v)
+	})
+}
+
+// UpdateQualityConfigVersion sets the "quality_config_version" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateQualityConfigVersion() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateQualityConfigVersion()
+	})
+}
+
+// SetQualityConfigChangedAt sets the "quality_config_changed_at" field.
+func (u *AccountUpsertBulk) SetQualityConfigChangedAt(v time.Time) *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.SetQualityConfigChangedAt(v)
+	})
+}
+
+// UpdateQualityConfigChangedAt sets the "quality_config_changed_at" field to the value that was provided on create.
+func (u *AccountUpsertBulk) UpdateQualityConfigChangedAt() *AccountUpsertBulk {
+	return u.Update(func(s *AccountUpsert) {
+		s.UpdateQualityConfigChangedAt()
 	})
 }
 

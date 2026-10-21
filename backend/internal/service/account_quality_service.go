@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/Wei-Shaw/sub2api/internal/pkg/qualitytrace"
@@ -13,8 +15,11 @@ import (
 	"time"
 )
 
+const accountQualityProbeRetries = 3
+
 type accountQualityProbeRunner interface {
 	RunQualityProbe(context.Context, int64, AccountQualityPolicy, string) (string, string, int64)
+	RunCandyProbe(context.Context, int64, AccountQualityPolicy, string) AccountQualityResult
 }
 
 type AccountQualityService struct {
@@ -100,7 +105,7 @@ func (s *AccountQualityService) tick(ctx context.Context) {
 		return groups[j].NextRunAt == nil || groups[i].NextRunAt.Before(*groups[j].NextRunAt)
 	})
 	for _, g := range groups {
-		if g.ID <= 0 || !g.Policy.Enabled || g.NextRunAt == nil || g.NextRunAt.After(time.Now()) {
+		if g.ID <= 0 || !g.Policy.Enabled || !g.Policy.CandyAuthorized() || g.NextRunAt == nil || g.NextRunAt.After(time.Now()) {
 			continue
 		}
 		s.mu.Lock()
@@ -142,6 +147,11 @@ func (s *AccountQualityService) SavePolicy(ctx context.Context, id int64, p Acco
 	if err := p.Validate(); err != nil {
 		return err
 	}
+	if p.Enabled {
+		if err := validateManxueCandyPolicy(p); err != nil {
+			return err
+		}
+	}
 	if (p.TraceOnAnomaly || p.ReferenceModel != "") && !qualitytrace.Supported(p.ReferenceModel) {
 		return fmt.Errorf("select a supported ModelTrace reference model")
 	}
@@ -151,21 +161,25 @@ func (s *AccountQualityService) SavePolicy(ctx context.Context, id int64, p Acco
 	s.invalidateRoutingGroup(id)
 	return s.refreshRouting(ctx)
 }
-func (s *AccountQualityService) Page(ctx context.Context, id int64, page, size int, search, platform, status, sortKey string) (AccountQualityPage, error) {
+func (s *AccountQualityService) Page(ctx context.Context, id int64, page, size int, search, platform, status, sortKey string, metricsModel ...string) (AccountQualityPage, error) {
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 	p, err := s.repo.Policy(ctx, id)
 	if err != nil {
 		return AccountQualityPage{}, err
 	}
-	rows, err := s.repo.Rows(ctx, id, p)
+	model := ""
+	if len(metricsModel) > 0 {
+		model = strings.TrimSpace(metricsModel[0])
+	}
+	rows, err := s.repo.Rows(ctx, id, p, AccountQualityObservationScope{Model: model})
 	if err != nil {
 		return AccountQualityPage{}, err
 	}
 	s.applyReliabilityCoverage(ctx, rows)
 	ScoreAccountQualityWithPolicy(rows, p)
 	for i := range rows {
-		if m, ok := s.effectiveMultiplier(ctx, id, p, rows[i].ID); ok {
+		if m, ok := s.effectiveMultiplier(ctx, id, p, rows[i].ID, rows[i].ConfigVersion); ok {
 			rows[i].EffectiveMultiplier = &m
 		}
 	}
@@ -202,6 +216,13 @@ func (s *AccountQualityService) Page(ctx context.Context, id int64, page, size i
 	}
 	sort.SliceStable(filtered, func(i, j int) bool {
 		a, b := filtered[i], filtered[j]
+		// Keep paused accounts after every schedulable account, before pagination.
+		if a.Schedulable != b.Schedulable {
+			return a.Schedulable
+		}
+		if !a.Schedulable {
+			return a.Name < b.Name || (a.Name == b.Name && a.ID < b.ID)
+		}
 		switch sortKey {
 		case "ttft":
 			if a.P50 == nil {
@@ -235,7 +256,7 @@ func (s *AccountQualityService) Page(ctx context.Context, id int64, page, size i
 	}
 	start := min((page-1)*size, n)
 	end := min(start+size, n)
-	return AccountQualityPage{Summary: summary, Items: filtered[start:end], Total: n, Page: page, PageSize: size, WindowHours: 24, Model: p.Model, Mode: p.Mode}, nil
+	return AccountQualityPage{Summary: summary, Items: filtered[start:end], Total: n, Page: page, PageSize: size, WindowHours: 24, CacheWindowHours: 24, Model: model, InspectionModel: p.Model, Mode: p.Mode}, nil
 }
 func (s *AccountQualityService) Run(ctx context.Context, g, a int64) (*AccountQualityRun, error) {
 	return s.RunBenchmark(ctx, g, a, "candy")
@@ -264,6 +285,11 @@ func (s *AccountQualityService) RunBenchmark(ctx context.Context, g, a int64, be
 	if benchmark != "candy" && benchmark != "modeltrace" && benchmark != "context" {
 		return nil, fmt.Errorf("unsupported benchmark")
 	}
+	if benchmark == "candy" {
+		if err := validateManxueCandyPolicy(p); err != nil {
+			return nil, err
+		}
+	}
 	if benchmark == "modeltrace" && !qualitytrace.Supported(p.ReferenceModel) {
 		return nil, fmt.Errorf("select a reference model from the local bank first")
 	}
@@ -282,11 +308,18 @@ func (s *AccountQualityService) RunBenchmark(ctx context.Context, g, a int64, be
 		if a > 0 && row.ID != a {
 			continue
 		}
-		if qualityAccountSupported(row.Platform, row.Type, p.Endpoint) && row.Status == "active" && row.Schedulable {
+		supported := qualityAccountSupported(row.Platform, row.Type, p.Endpoint)
+		if benchmark == "candy" {
+			supported = p.Endpoint == "responses" && qualityCandyAccountSupported(row.Platform, row.Type)
+		}
+		if supported && row.Status == "active" && row.Schedulable {
 			ids = append(ids, row.ID)
 		}
 	}
 	if len(ids) == 0 {
+		if benchmark == "candy" {
+			return nil, fmt.Errorf("没有支持 Responses 的可用账号")
+		}
 		return nil, fmt.Errorf("no eligible accounts for the selected protocol")
 	}
 	if len(ids) > p.MaxAccounts {
@@ -391,75 +424,77 @@ sendLoop:
 		slog.Error("quality finish failed", "run_id", run.ID, "error", err)
 	}
 }
-func (s *AccountQualityService) probeCandy(ctx context.Context, run *AccountQualityRun, p AccountQualityPolicy, id int64) {
-	first := ""
-	if previous, err := s.repo.RecentResult(ctx, id, p, "candy-v1"); run.Scheduled && err == nil && previous != nil {
-		result := *previous
+func (s *AccountQualityService) probeCandy(ctx context.Context, run *AccountQualityRun, p AccountQualityPolicy, id, version int64) {
+	var result AccountQualityResult
+	if previous, err := s.repo.RecentResult(ctx, id, p, accountQualityCandyBenchmark); run.Scheduled && err == nil && previous != nil {
+		result = *previous
 		result.ID = 0
-		result.RunID = run.ID
-		result.GroupID = run.GroupID
-		result.AccountID = id
-		result.Model = p.Model
-		result.Endpoint = p.Endpoint
 		result.RequestsUsed = 0
-		result.Effort = p.Effort
-		result.ServiceTier = p.ServiceTier
-		result.Benchmark = "candy-v1"
 		result.Detail = fmt.Sprintf("reused_result:%d", previous.ID)
-		if err = s.repo.AddResult(ctx, &result); err != nil {
-			s.persistenceFailures.Store(run.ID, true)
-			slog.Error("quality reuse not persisted", "error", err)
-		}
+		s.saveCandyResult(ctx, run, p, id, version, &result)
 		return
 	}
-	for attempt := 0; attempt < 3; attempt++ {
+	for attempt := 0; attempt <= accountQualityProbeRetries; attempt++ {
 		if ctx.Err() != nil || s.repo.Canceled(ctx, run.ID) {
 			return
 		}
-		prompt := accountQualityCandyPrompt + "\n仅输出 <answer>整数</answer>，不要解释或使用工具。"
-		expected := "21"
-		benchmark := "candy-v1"
-		if attempt == 1 && first == "passed" {
-			var variantErr error
-			prompt, expected, variantErr = qualityCandyVariant()
-			if variantErr != nil {
+		if attempt > 0 {
+			current, err := s.repo.ConfigVersion(ctx, id)
+			if err != nil || current != version {
 				return
 			}
-			benchmark = "candy-variant-v1"
 		}
-		answer, detail, ms := s.tester.RunQualityProbe(ctx, id, p, prompt)
-		verdict := "error"
-		if detail == "" {
-			verdict = judgeAccountQualityAnswer(answer, expected)
+		result = s.tester.RunCandyProbe(ctx, id, p, fmt.Sprintf("sub2api-candy-%d-%d-%s", run.ID, id, rand.Text()))
+		var evidence map[string]any
+		_ = json.Unmarshal(result.Evidence, &evidence)
+		if evidence == nil {
+			evidence = map[string]any{}
 		}
-		result := &AccountQualityResult{RunID: run.ID, GroupID: run.GroupID, AccountID: id, Model: p.Model, Effort: p.Effort, ServiceTier: p.ServiceTier, Endpoint: p.Endpoint, RequestsUsed: 1, Benchmark: benchmark, Verdict: verdict, Answer: answer, Detail: detail, DurationMs: ms, Evidence: qualityChallengeEvidence(prompt, expected, nil)}
-		result.Evidence = qualityResponseEvidence(result.Evidence, result.Answer)
-		if err := s.repo.AddResult(ctx, result); err != nil {
-			s.persistenceFailures.Store(run.ID, true)
-			slog.Error("quality result not persisted", "error", err)
+		evidence["retry_attempt"] = attempt
+		evidence["retry_limit"] = accountQualityProbeRetries
+		result.Evidence, _ = json.Marshal(evidence)
+		if !s.saveCandyResult(ctx, run, p, id, version, &result) {
 			return
 		}
-		if attempt == 0 {
-			first = verdict
-		}
-		if verdict == "error" || verdict == "unparseable" {
+		// Local preflight failures and cancellations cannot benefit from a new task.
+		if result.Verdict != "error" || result.RequestsUsed == 0 || result.Detail == "cancelled" {
 			return
-		}
-		if attempt == 1 && first == "passed" {
-			return
-		}
-		if first == "passed" || verdict == "passed" {
-			if attempt > 0 {
-				return
-			}
 		}
 	}
+}
+func (s *AccountQualityService) saveCandyResult(ctx context.Context, run *AccountQualityRun, p AccountQualityPolicy, id, version int64, result *AccountQualityResult) bool {
+	result.ConfigVersion = version
+	result.RunID = run.ID
+	result.GroupID = run.GroupID
+	result.AccountID = id
+	result.Model = p.Model
+	result.Effort = p.Effort
+	result.ServiceTier = p.ServiceTier
+	result.Endpoint = p.Endpoint
+	result.Benchmark = accountQualityCandyBenchmark
+	return s.saveProbeResult(ctx, result, p)
+}
+func (s *AccountQualityService) saveProbeResult(ctx context.Context, result *AccountQualityResult, p AccountQualityPolicy) bool {
+	if err := s.repo.AddResult(ctx, result); err != nil {
+		s.persistenceFailures.Store(result.RunID, true)
+		slog.Error("quality result not persisted", "error", err)
+		return false
+	}
+	if p.Mode == "auto" && ((result.Benchmark == accountQualityCandyBenchmark && (result.Verdict == "incorrect" || result.Verdict == "passed")) || (strings.HasPrefix(result.Benchmark, "context-") && result.Verdict == "incorrect")) {
+		// Publish the result immediately rather than waiting for the periodic snapshot.
+		refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		if err := s.refreshRouting(refreshCtx); err != nil {
+			slog.Error("quality routing refresh after probe failed", "account_id", result.AccountID, "error", err)
+		}
+	}
+	return true
 }
 func (s *AccountQualityService) Runs(ctx context.Context, g int64) ([]AccountQualityRun, error) {
 	return s.repo.Runs(ctx, g)
 }
-func (s *AccountQualityService) Results(ctx context.Context, g, a int64) ([]AccountQualityResult, error) {
-	return s.repo.Results(ctx, g, a)
+func (s *AccountQualityService) Results(ctx context.Context, g, a int64, ids ...int64) ([]AccountQualityResult, error) {
+	return s.repo.Results(ctx, g, a, ids...)
 }
 func (s *AccountQualityService) Cancel(ctx context.Context, id int64) error {
 	if err := s.repo.CancelRun(ctx, id); err != nil {

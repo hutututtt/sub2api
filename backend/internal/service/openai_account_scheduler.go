@@ -2506,7 +2506,7 @@ func (s *OpenAIGatewayService) selectAccountWithSchedulerOnce(
 		ExcludedIDs:             excludedIDs,
 	})
 	if selectErr == nil && selection != nil && selection.Account != nil {
-		s.accountQuality.recordRouting(ctx, groupID, requestedModel, selection.Account.ID, decision.Layer)
+		s.accountQuality.recordRouting(ctx, groupID, requestedModel, selection.Account, decision.Layer)
 	}
 	return selection, decision, selectErr
 }
@@ -3219,7 +3219,7 @@ func (s *defaultOpenAIAccountScheduler) applyAccountQuality(ctx context.Context,
 	}
 	for i := range plan.candidates {
 		c := &plan.candidates[i]
-		m := group.Weights[c.account.ID].Multiplier
+		m := qualityAccountMultiplier(group.Weights[c.account.ID], c.account)
 		if m <= 0 {
 			m = 1
 		}

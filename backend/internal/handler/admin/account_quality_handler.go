@@ -7,6 +7,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"net/http"
 	"strconv"
+	"strings"
 )
 
 type AccountQualityHandler struct {
@@ -44,7 +45,7 @@ func (h *AccountQualityHandler) Page(c *gin.Context) {
 	}
 	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
 	size, _ := strconv.Atoi(c.DefaultQuery("page_size", "10"))
-	v, err := h.svc.Page(c.Request.Context(), id, page, size, c.Query("search"), c.Query("platform"), c.Query("status"), c.Query("sort"))
+	v, err := h.svc.Page(c.Request.Context(), id, page, size, c.Query("search"), c.Query("platform"), c.Query("status"), c.Query("sort"), c.Query("metrics_model"))
 	if err != nil {
 		response.InternalError(c, "Unable to load account observations")
 		return
@@ -105,7 +106,23 @@ func (h *AccountQualityHandler) Results(c *gin.Context) {
 		return
 	}
 	a, _ := strconv.ParseInt(c.DefaultQuery("account_id", "0"), 10, 64)
-	v, err := h.svc.Results(c.Request.Context(), id, a)
+	var ids []int64
+	if raw := c.Query("result_ids"); raw != "" {
+		parts := strings.Split(raw, ",")
+		if a <= 0 || len(parts) > 100 {
+			response.BadRequest(c, "Invalid evidence selection")
+			return
+		}
+		for _, part := range parts {
+			resultID, err := strconv.ParseInt(part, 10, 64)
+			if err != nil || resultID <= 0 {
+				response.BadRequest(c, "Invalid evidence selection")
+				return
+			}
+			ids = append(ids, resultID)
+		}
+	}
+	v, err := h.svc.Results(c.Request.Context(), id, a, ids...)
 	if err != nil {
 		response.InternalError(c, "Unable to load results")
 		return

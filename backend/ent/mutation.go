@@ -2288,6 +2288,9 @@ type AccountMutation struct {
 	created_at                  *time.Time
 	updated_at                  *time.Time
 	deleted_at                  *time.Time
+	quality_config_version      *int64
+	addquality_config_version   *int64
+	quality_config_changed_at   *time.Time
 	name                        *string
 	notes                       *string
 	platform                    *string
@@ -2555,6 +2558,98 @@ func (m *AccountMutation) DeletedAtCleared() bool {
 func (m *AccountMutation) ResetDeletedAt() {
 	m.deleted_at = nil
 	delete(m.clearedFields, account.FieldDeletedAt)
+}
+
+// SetQualityConfigVersion sets the "quality_config_version" field.
+func (m *AccountMutation) SetQualityConfigVersion(i int64) {
+	m.quality_config_version = &i
+	m.addquality_config_version = nil
+}
+
+// QualityConfigVersion returns the value of the "quality_config_version" field in the mutation.
+func (m *AccountMutation) QualityConfigVersion() (r int64, exists bool) {
+	v := m.quality_config_version
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldQualityConfigVersion returns the old "quality_config_version" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldQualityConfigVersion(ctx context.Context) (v int64, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldQualityConfigVersion is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldQualityConfigVersion requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldQualityConfigVersion: %w", err)
+	}
+	return oldValue.QualityConfigVersion, nil
+}
+
+// AddQualityConfigVersion adds i to the "quality_config_version" field.
+func (m *AccountMutation) AddQualityConfigVersion(i int64) {
+	if m.addquality_config_version != nil {
+		*m.addquality_config_version += i
+	} else {
+		m.addquality_config_version = &i
+	}
+}
+
+// AddedQualityConfigVersion returns the value that was added to the "quality_config_version" field in this mutation.
+func (m *AccountMutation) AddedQualityConfigVersion() (r int64, exists bool) {
+	v := m.addquality_config_version
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// ResetQualityConfigVersion resets all changes to the "quality_config_version" field.
+func (m *AccountMutation) ResetQualityConfigVersion() {
+	m.quality_config_version = nil
+	m.addquality_config_version = nil
+}
+
+// SetQualityConfigChangedAt sets the "quality_config_changed_at" field.
+func (m *AccountMutation) SetQualityConfigChangedAt(t time.Time) {
+	m.quality_config_changed_at = &t
+}
+
+// QualityConfigChangedAt returns the value of the "quality_config_changed_at" field in the mutation.
+func (m *AccountMutation) QualityConfigChangedAt() (r time.Time, exists bool) {
+	v := m.quality_config_changed_at
+	if v == nil {
+		return
+	}
+	return *v, true
+}
+
+// OldQualityConfigChangedAt returns the old "quality_config_changed_at" field's value of the Account entity.
+// If the Account object wasn't provided to the builder, the object is fetched from the database.
+// An error is returned if the mutation operation is not UpdateOne, or the database query fails.
+func (m *AccountMutation) OldQualityConfigChangedAt(ctx context.Context) (v time.Time, err error) {
+	if !m.op.Is(OpUpdateOne) {
+		return v, errors.New("OldQualityConfigChangedAt is only allowed on UpdateOne operations")
+	}
+	if m.id == nil || m.oldValue == nil {
+		return v, errors.New("OldQualityConfigChangedAt requires an ID field in the mutation")
+	}
+	oldValue, err := m.oldValue(ctx)
+	if err != nil {
+		return v, fmt.Errorf("querying old value for OldQualityConfigChangedAt: %w", err)
+	}
+	return oldValue.QualityConfigChangedAt, nil
+}
+
+// ResetQualityConfigChangedAt resets all changes to the "quality_config_changed_at" field.
+func (m *AccountMutation) ResetQualityConfigChangedAt() {
+	m.quality_config_changed_at = nil
 }
 
 // SetName sets the "name" field.
@@ -4138,7 +4233,7 @@ func (m *AccountMutation) Type() string {
 // order to get all numeric fields that were incremented/decremented, call
 // AddedFields().
 func (m *AccountMutation) Fields() []string {
-	fields := make([]string, 0, 31)
+	fields := make([]string, 0, 33)
 	if m.created_at != nil {
 		fields = append(fields, account.FieldCreatedAt)
 	}
@@ -4147,6 +4242,12 @@ func (m *AccountMutation) Fields() []string {
 	}
 	if m.deleted_at != nil {
 		fields = append(fields, account.FieldDeletedAt)
+	}
+	if m.quality_config_version != nil {
+		fields = append(fields, account.FieldQualityConfigVersion)
+	}
+	if m.quality_config_changed_at != nil {
+		fields = append(fields, account.FieldQualityConfigChangedAt)
 	}
 	if m.name != nil {
 		fields = append(fields, account.FieldName)
@@ -4246,6 +4347,10 @@ func (m *AccountMutation) Field(name string) (ent.Value, bool) {
 		return m.UpdatedAt()
 	case account.FieldDeletedAt:
 		return m.DeletedAt()
+	case account.FieldQualityConfigVersion:
+		return m.QualityConfigVersion()
+	case account.FieldQualityConfigChangedAt:
+		return m.QualityConfigChangedAt()
 	case account.FieldName:
 		return m.Name()
 	case account.FieldNotes:
@@ -4317,6 +4422,10 @@ func (m *AccountMutation) OldField(ctx context.Context, name string) (ent.Value,
 		return m.OldUpdatedAt(ctx)
 	case account.FieldDeletedAt:
 		return m.OldDeletedAt(ctx)
+	case account.FieldQualityConfigVersion:
+		return m.OldQualityConfigVersion(ctx)
+	case account.FieldQualityConfigChangedAt:
+		return m.OldQualityConfigChangedAt(ctx)
 	case account.FieldName:
 		return m.OldName(ctx)
 	case account.FieldNotes:
@@ -4402,6 +4511,20 @@ func (m *AccountMutation) SetField(name string, value ent.Value) error {
 			return fmt.Errorf("unexpected type %T for field %s", value, name)
 		}
 		m.SetDeletedAt(v)
+		return nil
+	case account.FieldQualityConfigVersion:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetQualityConfigVersion(v)
+		return nil
+	case account.FieldQualityConfigChangedAt:
+		v, ok := value.(time.Time)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.SetQualityConfigChangedAt(v)
 		return nil
 	case account.FieldName:
 		v, ok := value.(string)
@@ -4607,6 +4730,9 @@ func (m *AccountMutation) SetField(name string, value ent.Value) error {
 // this mutation.
 func (m *AccountMutation) AddedFields() []string {
 	var fields []string
+	if m.addquality_config_version != nil {
+		fields = append(fields, account.FieldQualityConfigVersion)
+	}
 	if m.addproxy_fallback_origin_id != nil {
 		fields = append(fields, account.FieldProxyFallbackOriginID)
 	}
@@ -4630,6 +4756,8 @@ func (m *AccountMutation) AddedFields() []string {
 // was not set, or was not defined in the schema.
 func (m *AccountMutation) AddedField(name string) (ent.Value, bool) {
 	switch name {
+	case account.FieldQualityConfigVersion:
+		return m.AddedQualityConfigVersion()
 	case account.FieldProxyFallbackOriginID:
 		return m.AddedProxyFallbackOriginID()
 	case account.FieldConcurrency:
@@ -4649,6 +4777,13 @@ func (m *AccountMutation) AddedField(name string) (ent.Value, bool) {
 // type.
 func (m *AccountMutation) AddField(name string, value ent.Value) error {
 	switch name {
+	case account.FieldQualityConfigVersion:
+		v, ok := value.(int64)
+		if !ok {
+			return fmt.Errorf("unexpected type %T for field %s", value, name)
+		}
+		m.AddQualityConfigVersion(v)
+		return nil
 	case account.FieldProxyFallbackOriginID:
 		v, ok := value.(int64)
 		if !ok {
@@ -4824,6 +4959,12 @@ func (m *AccountMutation) ResetField(name string) error {
 		return nil
 	case account.FieldDeletedAt:
 		m.ResetDeletedAt()
+		return nil
+	case account.FieldQualityConfigVersion:
+		m.ResetQualityConfigVersion()
+		return nil
+	case account.FieldQualityConfigChangedAt:
+		m.ResetQualityConfigChangedAt()
 		return nil
 	case account.FieldName:
 		m.ResetName()

@@ -163,6 +163,7 @@ export default {
 
   // Navigation
   nav: {
+    canvas: 'AI Canvas',
     dashboard: 'Dashboard',
     announcements: 'Announcements',
     apiKeys: 'API Keys',
@@ -171,6 +172,7 @@ export default {
     redeem: 'Redeem',
     affiliate: 'Affiliate Rebates',
     affiliateManagement: 'Affiliate Rebates',
+    promotions: 'Promotion Analytics',
     affiliateInviteRecords: 'Invite Records',
     affiliateRebateRecords: 'Rebate Records',
     affiliateTransferRecords: 'Transfer Records',

@@ -17,26 +17,37 @@ type AccountQualityScoreWeights struct {
 	Stability float64 `json:"stability"`
 }
 type AccountQualityPolicy struct {
-	ScoreWeights    AccountQualityScoreWeights `json:"score_weights"`
-	Enabled         bool                       `json:"enabled"`
-	IntervalMinutes int                        `json:"interval_minutes"`
-	Model           string                     `json:"model"`
-	Effort          string                     `json:"effort"`
-	ServiceTier     string                     `json:"service_tier"`
-	DailyBudget     int                        `json:"daily_budget"`
-	MaxAccounts     int                        `json:"max_accounts"`
-	Mode            string                     `json:"mode"`
-	Endpoint        string                     `json:"endpoint"`
-	TraceOnAnomaly  bool                       `json:"trace_on_anomaly"`
-	ReferenceModel  string                     `json:"reference_model"`
-	ContextCheck    bool                       `json:"context_check"`
-	ContextChars    int                        `json:"context_chars"`
+	CandyConsentVersion string                     `json:"candy_consent_version"`
+	ScoreWeights        AccountQualityScoreWeights `json:"score_weights"`
+	Enabled             bool                       `json:"enabled"`
+	IntervalMinutes     int                        `json:"interval_minutes"`
+	Model               string                     `json:"model"`
+	Effort              string                     `json:"effort"`
+	ServiceTier         string                     `json:"service_tier"`
+	DailyBudget         int                        `json:"daily_budget"`
+	MaxAccounts         int                        `json:"max_accounts"`
+	Mode                string                     `json:"mode"`
+	Endpoint            string                     `json:"endpoint"`
+	TraceOnAnomaly      bool                       `json:"trace_on_anomaly"`
+	ReferenceModel      string                     `json:"reference_model"`
+	ContextCheck        bool                       `json:"context_check"`
+	ContextChars        int                        `json:"context_chars"`
+}
+
+// Bump this whenever the recipient or credential disclosure contract changes.
+const AccountQualityCandyConsentVersion = "manxue-v1"
+
+func (p AccountQualityPolicy) CandyAuthorized() bool {
+	return p.CandyConsentVersion == AccountQualityCandyConsentVersion
 }
 
 func DefaultAccountQualityPolicy() AccountQualityPolicy {
 	return AccountQualityPolicy{IntervalMinutes: 15, Effort: "low", DailyBudget: 200, MaxAccounts: 50, Mode: "observe", Endpoint: "responses", ContextChars: 32000, ScoreWeights: AccountQualityScoreWeights{Quality: 40, TTFT: 25, Cache: 15, Stability: 20}}
 }
 func (p AccountQualityPolicy) Validate() error {
+	if p.Enabled && !p.CandyAuthorized() {
+		return fmt.Errorf("confirm credential disclosure to Manxue before enabling scheduled inspection")
+	}
 	sum := 0.0
 	for _, w := range []float64{p.ScoreWeights.Quality, p.ScoreWeights.TTFT, p.ScoreWeights.Cache, p.ScoreWeights.Stability} {
 		if math.IsNaN(w) || math.IsInf(w, 0) || w < 0 || w > 100 {
@@ -81,12 +92,12 @@ func (p AccountQualityPolicy) Validate() error {
 		return fmt.Errorf("model name too long")
 	}
 	switch p.Effort {
-	case "none", "low", "medium", "high", "xhigh", "max", "unspecified":
+	case "none", "low", "medium", "high", "xhigh", "max", "ultra", "unspecified":
 	default:
 		return fmt.Errorf("unsupported reasoning effort")
 	}
 	switch p.ServiceTier {
-	case "", "priority", "flex":
+	case "", "priority", "flex", "ultrafast":
 	default:
 		return fmt.Errorf("unsupported service tier")
 	}
@@ -103,6 +114,8 @@ type AccountQualityGroup struct {
 	NextRunAt *time.Time           `json:"next_run_at"`
 }
 type AccountQualityRow struct {
+	ConfigVersion       int64                          `json:"-"`
+	EvidenceIDs         []int64                        `json:"evidence_ids"`
 	Failures            int64                          `json:"failures"`
 	UnknownFailureScope int64                          `json:"unknown_failure_scope"`
 	ReliabilityKnown    bool                           `json:"reliability_known"`
@@ -126,8 +139,10 @@ type AccountQualityRow struct {
 	P50                 *float64                       `json:"p50_ms"`
 	P95                 *float64                       `json:"p95_ms"`
 	CacheRate           *float64                       `json:"cache_rate"`
+	CacheSamples        int64                          `json:"cache_samples"`
 	LastRequestAt       *time.Time                     `json:"last_request_at"`
 	CandyStatus         string                         `json:"candy_status"`
+	CapabilityFailed    bool                           `json:"-"`
 	QualitySamples      int                            `json:"quality_samples"`
 	QualityPassed       int                            `json:"quality_passed"`
 	LastTestAt          *time.Time                     `json:"last_test_at"`
@@ -140,14 +155,22 @@ type AccountQualitySummary struct {
 	Review  int `json:"review"`
 }
 type AccountQualityPage struct {
-	Summary     AccountQualitySummary `json:"summary"`
-	Items       []AccountQualityRow   `json:"items"`
-	Total       int                   `json:"total"`
-	Page        int                   `json:"page"`
-	PageSize    int                   `json:"page_size"`
-	WindowHours int                   `json:"window_hours"`
-	Model       string                `json:"model"`
-	Mode        string                `json:"mode"`
+	Summary          AccountQualitySummary `json:"summary"`
+	Items            []AccountQualityRow   `json:"items"`
+	Total            int                   `json:"total"`
+	Page             int                   `json:"page"`
+	PageSize         int                   `json:"page_size"`
+	WindowHours      int                   `json:"window_hours"`
+	CacheWindowHours int                   `json:"cache_window_hours"`
+	Model            string                `json:"model"`
+	InspectionModel  string                `json:"inspection_model"`
+	Mode             string                `json:"mode"`
+}
+
+// An explicit observation scope selects business statistics independently of
+// inspection conditions. Omitting it retains the strict scope used by routing.
+type AccountQualityObservationScope struct {
+	Model string
 }
 type AccountQualityScoreComponent struct {
 	Key             string   `json:"key"`
@@ -170,32 +193,34 @@ type AccountQualityRun struct {
 	CancelRequested bool       `json:"cancel_requested"`
 }
 type AccountQualityResult struct {
-	Evidence     json.RawMessage `json:"evidence,omitempty"`
-	Endpoint     string          `json:"endpoint"`
-	RequestsUsed int             `json:"requests_used"`
-	ID           int64           `json:"id"`
-	RunID        int64           `json:"run_id"`
-	GroupID      int64           `json:"group_id"`
-	AccountID    int64           `json:"account_id"`
-	Model        string          `json:"model"`
-	Effort       string          `json:"effort"`
-	ServiceTier  string          `json:"service_tier"`
-	Benchmark    string          `json:"benchmark"`
-	Verdict      string          `json:"verdict"`
-	Answer       string          `json:"answer"`
-	Detail       string          `json:"detail"`
-	DurationMs   int64           `json:"duration_ms"`
-	CreatedAt    time.Time       `json:"created_at"`
+	ConfigVersion int64           `json:"config_version"`
+	Evidence      json.RawMessage `json:"evidence,omitempty"`
+	Endpoint      string          `json:"endpoint"`
+	RequestsUsed  int             `json:"requests_used"`
+	ID            int64           `json:"id"`
+	RunID         int64           `json:"run_id"`
+	GroupID       int64           `json:"group_id"`
+	AccountID     int64           `json:"account_id"`
+	Model         string          `json:"model"`
+	Effort        string          `json:"effort"`
+	ServiceTier   string          `json:"service_tier"`
+	Benchmark     string          `json:"benchmark"`
+	Verdict       string          `json:"verdict"`
+	Answer        string          `json:"answer"`
+	Detail        string          `json:"detail"`
+	DurationMs    int64           `json:"duration_ms"`
+	CreatedAt     time.Time       `json:"created_at"`
 }
 type AccountQualityRepository interface {
 	Groups(context.Context) ([]AccountQualityGroup, error)
 	Policy(context.Context, int64) (AccountQualityPolicy, error)
 	SavePolicy(context.Context, int64, AccountQualityPolicy) error
 	AdvanceSchedule(context.Context, int64, time.Time) error
-	Rows(context.Context, int64, AccountQualityPolicy) ([]AccountQualityRow, error)
+	Rows(context.Context, int64, AccountQualityPolicy, ...AccountQualityObservationScope) ([]AccountQualityRow, error)
 	StartRun(context.Context, int64, AccountQualityPolicy, int, string, bool) (*AccountQualityRun, error)
 	Runs(context.Context, int64) ([]AccountQualityRun, error)
-	Results(context.Context, int64, int64) ([]AccountQualityResult, error)
+	Results(context.Context, int64, int64, ...int64) ([]AccountQualityResult, error)
+	ConfigVersion(context.Context, int64) (int64, error)
 	AddResult(context.Context, *AccountQualityResult) error
 	FinishRun(context.Context, int64, string) error
 	CancelRun(context.Context, int64) error
@@ -255,7 +280,7 @@ func ScoreAccountQualityWithPolicy(rows []AccountQualityRow, p AccountQualityPol
 		if r.CacheRate != nil {
 			cache = *r.CacheRate
 		}
-		add("cache", cache, p.ScoreWeights.Cache, r.Requests, r.Requests >= 30 && r.CacheRate != nil, "provider_reported_input_tokens")
+		add("cache", cache, p.ScoreWeights.Cache, r.CacheSamples, r.CacheSamples >= 30 && r.CacheRate != nil, "provider_reported_input_tokens")
 		attempts := r.Requests + r.Failures
 		reliability := 0.0
 		if attempts > 0 && r.ReliabilityKnown {
@@ -294,8 +319,9 @@ func ScoreAccountQualityWithPolicy(rows []AccountQualityRow, p AccountQualityPol
 }
 
 type AccountQualityStoredWeight struct {
-	Multiplier float64
-	UpdatedAt  time.Time
+	ConfigVersion int64
+	Multiplier    float64
+	UpdatedAt     time.Time
 }
 
 func (p AccountQualityPolicy) ScopeKey() string {

@@ -2,11 +2,28 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/Wei-Shaw/sub2api/internal/service"
 	"testing"
 )
+
+func TestAccountQualityVersionSurvivesSchedulerProjection(t *testing.T) {
+	full, meta, err := marshalSchedulerCacheAccount(service.Account{ID: 7, QualityConfigVersion: 3})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, data := range [][]byte{full, meta} {
+		var account service.Account
+		if err := json.Unmarshal(data, &account); err != nil {
+			t.Fatal(err)
+		}
+		if account.QualityConfigVersion != 3 {
+			t.Fatal("scheduler projection discarded configuration version")
+		}
+	}
+}
 
 func TestAccountQualityCancelledLeaseCannotPersistOrResurrect(t *testing.T) {
 	db, mock, err := sqlmock.New()

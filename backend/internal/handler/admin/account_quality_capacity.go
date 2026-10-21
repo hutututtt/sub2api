@@ -3,6 +3,8 @@ package admin
 import (
 	"context"
 	"log/slog"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/Wei-Shaw/sub2api/internal/handler/dto"
@@ -35,11 +37,33 @@ type accountQualityCapacity struct {
 
 type accountQualityPageItem struct {
 	service.AccountQualityRow
-	Capacity *accountQualityCapacity `json:"capacity"`
+	Capacity                *accountQualityCapacity `json:"capacity"`
+	HomepageURL             string                  `json:"homepage_url,omitempty"`
+	ErrorMessage            string                  `json:"error_message"`
+	TempUnschedulableUntil  *time.Time              `json:"temp_unschedulable_until"`
+	TempUnschedulableReason string                  `json:"temp_unschedulable_reason"`
+	RateLimitResetAt        *time.Time              `json:"rate_limit_reset_at"`
+	OverloadUntil           *time.Time              `json:"overload_until"`
 }
 type accountQualityCapacityPage struct {
 	service.AccountQualityPage
 	Items []accountQualityPageItem `json:"items"`
+}
+
+func qualityAccountHomepageURL(account *service.Account) string {
+	if account == nil || account.Type != service.AccountTypeAPIKey {
+		return ""
+	}
+	baseURL, ok := account.Credentials["base_url"].(string)
+	if !ok {
+		return ""
+	}
+	parsed, err := url.Parse(strings.TrimSpace(baseURL))
+	if err != nil || parsed.Hostname() == "" || (!strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https")) {
+		return ""
+	}
+	// Return only the upstream origin, without URL credentials, paths or query parameters.
+	return (&url.URL{Scheme: strings.ToLower(parsed.Scheme), Host: parsed.Host}).String()
 }
 
 func qualityCapacityFromAccount(account *service.Account) *accountQualityCapacity {
@@ -74,6 +98,8 @@ func (h *AccountQualityHandler) pageWithCapacity(ctx context.Context, page servi
 		return result
 	}
 	capacities := make(map[int64]*accountQualityCapacity, len(accounts))
+	homepages := make(map[int64]string, len(accounts))
+	accountsByID := make(map[int64]*service.Account, len(accounts))
 	windowAccounts := make([]*service.Account, 0)
 	sessionIDs := make([]int64, 0)
 	rpmIDs := make([]int64, 0)
@@ -83,6 +109,8 @@ func (h *AccountQualityHandler) pageWithCapacity(ctx context.Context, page servi
 			continue
 		}
 		capacities[a.ID] = qualityCapacityFromAccount(a)
+		accountsByID[a.ID] = a
+		homepages[a.ID] = qualityAccountHomepageURL(a)
 		if !a.IsAnthropicOAuthOrSetupToken() {
 			continue
 		}
@@ -137,6 +165,16 @@ func (h *AccountQualityHandler) pageWithCapacity(ctx context.Context, page servi
 	}
 	for i := range result.Items {
 		result.Items[i].Capacity = capacities[result.Items[i].ID]
+		result.Items[i].HomepageURL = homepages[result.Items[i].ID]
+		if a := accountsByID[result.Items[i].ID]; a != nil {
+			item := &result.Items[i]
+			item.Status, item.Schedulable = a.Status, a.Schedulable
+			item.ErrorMessage = a.ErrorMessage
+			item.TempUnschedulableUntil = a.TempUnschedulableUntil
+			item.TempUnschedulableReason = a.TempUnschedulableReason
+			item.RateLimitResetAt = a.RateLimitResetAt
+			item.OverloadUntil = a.OverloadUntil
+		}
 	}
 	return result
 }

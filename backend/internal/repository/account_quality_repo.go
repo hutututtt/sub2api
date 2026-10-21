@@ -88,8 +88,13 @@ func (r *accountQualityRepo) Groups(ctx context.Context) ([]service.AccountQuali
 	}
 	return out, nil
 }
-func (r *accountQualityRepo) Rows(ctx context.Context, id int64, p service.AccountQualityPolicy) ([]service.AccountQualityRow, error) {
-	rows, err := r.db.QueryContext(ctx, accountQualityRowsSQL, id, p.Model, p.Effort, p.ServiceTier, p.Endpoint, p.ReferenceModel, qualitytrace.Revision())
+func (r *accountQualityRepo) Rows(ctx context.Context, id int64, p service.AccountQualityPolicy, observation ...service.AccountQualityObservationScope) ([]service.AccountQualityRow, error) {
+	business := len(observation) > 0
+	model := ""
+	if business {
+		model = strings.TrimSpace(observation[0].Model)
+	}
+	rows, err := r.db.QueryContext(ctx, accountQualityRowsSQL, id, p.Model, p.Effort, p.ServiceTier, p.Endpoint, p.ReferenceModel, qualitytrace.Revision(), business, model)
 	if err != nil {
 		return nil, err
 	}
@@ -97,9 +102,19 @@ func (r *accountQualityRepo) Rows(ctx context.Context, id int64, p service.Accou
 	out := []service.AccountQualityRow{}
 	for rows.Next() {
 		var a service.AccountQualityRow
-		if err = rows.Scan(&a.ID, &a.Name, &a.Platform, &a.Type, &a.Status, &a.Schedulable, &a.Priority, &a.Concurrency, &a.Requests, &a.TTFTSamples, &a.P50, &a.P95, &a.CacheRate, &a.LastRequestAt, &a.CandyStatus, &a.QualitySamples, &a.QualityPassed, &a.LastTestAt, &a.Failures, &a.UnknownFailureScope, &a.TraceStatus, &a.TraceAt, &a.TraceCandidate); err != nil {
+		if err = rows.Scan(&a.ID, &a.Name, &a.Platform, &a.Type, &a.Status, &a.Schedulable, &a.Priority, &a.Concurrency, &a.Requests, &a.TTFTSamples, &a.P50, &a.P95, &a.CacheRate, &a.CacheSamples, &a.LastRequestAt, &a.CandyStatus, &a.QualitySamples, &a.QualityPassed, &a.LastTestAt, &a.Failures, &a.UnknownFailureScope, &a.TraceStatus, &a.TraceAt, &a.TraceCandidate, &a.ConfigVersion, pq.Array(&a.EvidenceIDs), &a.CapabilityFailed); err != nil {
 			return nil, err
 		}
+		// Include verdict evidence first, then a bounded set of scoring samples.
+		ids := make([]int64, 0, min(100, len(a.EvidenceIDs)))
+		seen := make(map[int64]bool)
+		for _, id := range a.EvidenceIDs {
+			if !seen[id] && len(ids) < 100 {
+				ids = append(ids, id)
+				seen[id] = true
+			}
+		}
+		a.EvidenceIDs = ids
 		out = append(out, a)
 	}
 	return out, rows.Err()
@@ -120,7 +135,7 @@ func (r *accountQualityRepo) StartRun(ctx context.Context, g int64, p service.Ac
 	if err = json.Unmarshal(currentRaw, &current); err != nil {
 		return nil, err
 	}
-	if scheduled && !current.Enabled {
+	if scheduled && (!current.Enabled || !current.CandyAuthorized()) {
 		return nil, service.ErrAccountQualityDisabled
 	}
 	oldRaw, _ := json.Marshal(p)
@@ -165,8 +180,15 @@ func (r *accountQualityRepo) Runs(ctx context.Context, g int64) ([]service.Accou
 	}
 	return out, rows.Err()
 }
-func (r *accountQualityRepo) Results(ctx context.Context, g, a int64) ([]service.AccountQualityResult, error) {
-	rows, err := r.db.QueryContext(ctx, "SELECT id,run_id,group_id,account_id,model,effort,service_tier,benchmark,verdict,answer,detail,duration_ms,created_at,evidence,endpoint,requests_used FROM account_quality_results WHERE group_id=$1 AND ($2=0 OR account_id=$2) ORDER BY id DESC LIMIT 100", g, a)
+func (r *accountQualityRepo) Results(ctx context.Context, g, a int64, ids ...int64) ([]service.AccountQualityResult, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT id,run_id,group_id,account_id,model,effort,service_tier,benchmark,verdict,answer,detail,duration_ms,created_at,evidence,endpoint,requests_used,config_version
+ FROM account_quality_results r WHERE
+ (cardinality($3::bigint[])=0 AND group_id=$1 AND ($2=0 OR account_id=$2)) OR
+ (cardinality($3::bigint[])>0 AND account_id=$2 AND id=ANY($3::bigint[]) AND EXISTS(
+ SELECT 1 FROM accounts a WHERE a.id=$2 AND a.deleted_at IS NULL AND
+ (($1>0 AND EXISTS(SELECT 1 FROM account_groups ag WHERE ag.account_id=a.id AND ag.group_id=$1)) OR
+ ($1=0 AND NOT EXISTS(SELECT 1 FROM account_groups ag JOIN groups g ON g.id=ag.group_id AND g.deleted_at IS NULL WHERE ag.account_id=a.id)))))
+ ORDER BY id DESC LIMIT 100`, g, a, pq.Array(append([]int64{}, ids...)))
 	if err != nil {
 		return nil, err
 	}
@@ -174,7 +196,7 @@ func (r *accountQualityRepo) Results(ctx context.Context, g, a int64) ([]service
 	out := []service.AccountQualityResult{}
 	for rows.Next() {
 		var x service.AccountQualityResult
-		if err = rows.Scan(&x.ID, &x.RunID, &x.GroupID, &x.AccountID, &x.Model, &x.Effort, &x.ServiceTier, &x.Benchmark, &x.Verdict, &x.Answer, &x.Detail, &x.DurationMs, &x.CreatedAt, &x.Evidence, &x.Endpoint, &x.RequestsUsed); err != nil {
+		if err = rows.Scan(&x.ID, &x.RunID, &x.GroupID, &x.AccountID, &x.Model, &x.Effort, &x.ServiceTier, &x.Benchmark, &x.Verdict, &x.Answer, &x.Detail, &x.DurationMs, &x.CreatedAt, &x.Evidence, &x.Endpoint, &x.RequestsUsed, &x.ConfigVersion); err != nil {
 			return nil, err
 		}
 		out = append(out, x)
@@ -194,7 +216,7 @@ func (r *accountQualityRepo) AddResult(ctx context.Context, x *service.AccountQu
 	if !active {
 		return context.Canceled
 	}
-	_, err = tx.ExecContext(ctx, "INSERT INTO account_quality_results(run_id,group_id,account_id,model,effort,service_tier,benchmark,verdict,answer,detail,duration_ms,evidence,endpoint,requests_used) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)", x.RunID, x.GroupID, x.AccountID, x.Model, x.Effort, x.ServiceTier, x.Benchmark, x.Verdict, x.Answer, x.Detail, x.DurationMs, qualityEvidenceJSON(x.Evidence), qualityResultEndpoint(x.Endpoint), qualityResultRequests(x))
+	_, err = tx.ExecContext(ctx, "INSERT INTO account_quality_results(run_id,group_id,account_id,model,effort,service_tier,benchmark,verdict,answer,detail,duration_ms,evidence,endpoint,requests_used,config_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)", x.RunID, x.GroupID, x.AccountID, x.Model, x.Effort, x.ServiceTier, x.Benchmark, x.Verdict, x.Answer, x.Detail, x.DurationMs, qualityEvidenceJSON(x.Evidence), qualityResultEndpoint(x.Endpoint), qualityResultRequests(x), x.ConfigVersion)
 	if err != nil {
 		return err
 	}
@@ -244,7 +266,7 @@ func (r *accountQualityRepo) Heartbeat(ctx context.Context, id int64) error {
 
 func (r *accountQualityRepo) RecentResult(ctx context.Context, id int64, p service.AccountQualityPolicy, benchmark string) (*service.AccountQualityResult, error) {
 	var x service.AccountQualityResult
-	err := r.db.QueryRowContext(ctx, "SELECT id,verdict,answer,detail,duration_ms FROM account_quality_results WHERE account_id=$1 AND model=$2 AND effort=$3 AND service_tier=$4 AND endpoint=$5 AND benchmark=$6 AND detail NOT LIKE 'reused_result:%' AND verdict IN ('passed','incorrect') AND created_at>NOW()-interval '15 minutes' ORDER BY created_at DESC LIMIT 1", id, p.Model, p.Effort, p.ServiceTier, p.Endpoint, benchmark).Scan(&x.ID, &x.Verdict, &x.Answer, &x.Detail, &x.DurationMs)
+	err := r.db.QueryRowContext(ctx, "SELECT id,verdict,answer,detail,duration_ms,evidence,config_version FROM account_quality_results WHERE config_version=(SELECT quality_config_version FROM accounts WHERE id=$1 AND deleted_at IS NULL) AND account_id=$1 AND model=$2 AND effort=$3 AND service_tier=$4 AND endpoint=$5 AND benchmark=$6 AND detail NOT LIKE 'reused_result:%' AND verdict IN ('passed','incorrect') AND created_at>NOW()-interval '15 minutes' ORDER BY created_at DESC LIMIT 1", id, p.Model, p.Effort, p.ServiceTier, p.Endpoint, benchmark).Scan(&x.ID, &x.Verdict, &x.Answer, &x.Detail, &x.DurationMs, &x.Evidence, &x.ConfigVersion)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -265,14 +287,14 @@ func qualityResultEndpoint(endpoint string) string {
 	return endpoint
 }
 func qualityResultRequests(r *service.AccountQualityResult) int {
-	if r.RequestsUsed == 0 && !strings.HasPrefix(r.Detail, "reused_result:") {
+	if r.RequestsUsed == 0 && r.Benchmark != "candy-manxue-v1" && !strings.HasPrefix(r.Detail, "reused_result:") {
 		return 1
 	}
 	return r.RequestsUsed
 }
 
 func (r *accountQualityRepo) LoadWeights(ctx context.Context, g int64, key string) (map[int64]service.AccountQualityStoredWeight, error) {
-	rows, err := r.db.QueryContext(ctx, "SELECT account_id,multiplier,updated_at FROM account_quality_weights WHERE group_id=$1 AND scope_key=$2", g, key)
+	rows, err := r.db.QueryContext(ctx, "SELECT w.account_id,w.multiplier,w.updated_at,w.config_version FROM account_quality_weights w JOIN accounts a ON a.id=w.account_id AND a.quality_config_version=w.config_version WHERE w.group_id=$1 AND w.scope_key=$2", g, key)
 	if err != nil {
 		return nil, err
 	}
@@ -281,7 +303,7 @@ func (r *accountQualityRepo) LoadWeights(ctx context.Context, g int64, key strin
 	for rows.Next() {
 		var id int64
 		var w service.AccountQualityStoredWeight
-		if err = rows.Scan(&id, &w.Multiplier, &w.UpdatedAt); err != nil {
+		if err = rows.Scan(&id, &w.Multiplier, &w.UpdatedAt, &w.ConfigVersion); err != nil {
 			return nil, err
 		}
 		out[id] = w
@@ -295,7 +317,7 @@ func (r *accountQualityRepo) SaveWeights(ctx context.Context, g int64, key strin
 	}
 	defer tx.Rollback()
 	for id, w := range weights {
-		if _, err = tx.ExecContext(ctx, "INSERT INTO account_quality_weights(group_id,account_id,scope_key,multiplier,updated_at) VALUES($1,$2,$3,$4,$5) ON CONFLICT(group_id,account_id,scope_key) DO UPDATE SET multiplier=EXCLUDED.multiplier,updated_at=EXCLUDED.updated_at", g, id, key, w.Multiplier, w.UpdatedAt); err != nil {
+		if _, err = tx.ExecContext(ctx, "INSERT INTO account_quality_weights(group_id,account_id,scope_key,multiplier,updated_at,config_version) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT(group_id,account_id,scope_key) DO UPDATE SET multiplier=EXCLUDED.multiplier,updated_at=EXCLUDED.updated_at,config_version=EXCLUDED.config_version", g, id, key, w.Multiplier, w.UpdatedAt, w.ConfigVersion); err != nil {
 			return err
 		}
 	}
@@ -305,4 +327,12 @@ func (r *accountQualityRepo) SaveWeights(ctx context.Context, g int64, key strin
 func (r *accountQualityRepo) AdvanceSchedule(ctx context.Context, g int64, next time.Time) error {
 	_, err := r.db.ExecContext(ctx, "UPDATE account_quality_policies SET next_run_at=$2 WHERE group_id=$1 AND next_run_at<=NOW() AND config->>'enabled'='true'", g, next)
 	return err
+}
+
+// Capture before sending any probe. A concurrent edit makes the stored result
+// ineligible instead of letting it certify the newly configured upstream.
+func (r *accountQualityRepo) ConfigVersion(ctx context.Context, id int64) (int64, error) {
+	var version int64
+	err := r.db.QueryRowContext(ctx, "SELECT quality_config_version FROM accounts WHERE id=$1 AND deleted_at IS NULL", id).Scan(&version)
+	return version, err
 }

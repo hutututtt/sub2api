@@ -16,7 +16,7 @@ const staticAssetsCacheControl = "public, max-age=31536000, immutable"
 // a Vite asset whose filename contains the default eight-character build hash.
 func isFingerprintedEmbeddedAssetPath(cleanPath string) bool {
 	cleanPath = strings.TrimPrefix(cleanPath, "/")
-	if !strings.HasPrefix(cleanPath, "assets/") {
+	if !strings.HasPrefix(cleanPath, "assets/") && !strings.HasPrefix(cleanPath, "canvas-app/assets/") {
 		return false
 	}
 
@@ -46,7 +46,14 @@ func isFingerprintedEmbeddedAssetPath(cleanPath string) bool {
 // applyStaticAssetCacheHeaders sets Cache-Control for long-cacheable static paths.
 // index.html / SPA routes must keep no-cache and are not handled here.
 func applyStaticAssetCacheHeaders(header http.Header, cleanPath string) {
-	if header == nil || !isFingerprintedEmbeddedAssetPath(cleanPath) {
+	if header == nil {
+		return
+	}
+	if cleanPath == "canvas-app/" || cleanPath == "canvas-app" || cleanPath == "canvas-app/index.html" {
+		header.Set("Cache-Control", "no-cache")
+		return
+	}
+	if !isFingerprintedEmbeddedAssetPath(cleanPath) {
 		return
 	}
 	header.Set("Cache-Control", staticAssetsCacheControl)

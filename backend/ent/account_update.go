@@ -57,6 +57,41 @@ func (_u *AccountUpdate) ClearDeletedAt() *AccountUpdate {
 	return _u
 }
 
+// SetQualityConfigVersion sets the "quality_config_version" field.
+func (_u *AccountUpdate) SetQualityConfigVersion(v int64) *AccountUpdate {
+	_u.mutation.ResetQualityConfigVersion()
+	_u.mutation.SetQualityConfigVersion(v)
+	return _u
+}
+
+// SetNillableQualityConfigVersion sets the "quality_config_version" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableQualityConfigVersion(v *int64) *AccountUpdate {
+	if v != nil {
+		_u.SetQualityConfigVersion(*v)
+	}
+	return _u
+}
+
+// AddQualityConfigVersion adds value to the "quality_config_version" field.
+func (_u *AccountUpdate) AddQualityConfigVersion(v int64) *AccountUpdate {
+	_u.mutation.AddQualityConfigVersion(v)
+	return _u
+}
+
+// SetQualityConfigChangedAt sets the "quality_config_changed_at" field.
+func (_u *AccountUpdate) SetQualityConfigChangedAt(v time.Time) *AccountUpdate {
+	_u.mutation.SetQualityConfigChangedAt(v)
+	return _u
+}
+
+// SetNillableQualityConfigChangedAt sets the "quality_config_changed_at" field if the given value is not nil.
+func (_u *AccountUpdate) SetNillableQualityConfigChangedAt(v *time.Time) *AccountUpdate {
+	if v != nil {
+		_u.SetQualityConfigChangedAt(*v)
+	}
+	return _u
+}
+
 // SetName sets the "name" field.
 func (_u *AccountUpdate) SetName(v string) *AccountUpdate {
 	_u.mutation.SetName(v)
@@ -811,6 +846,15 @@ func (_u *AccountUpdate) sqlSave(ctx context.Context) (_node int, err error) {
 	if _u.mutation.DeletedAtCleared() {
 		_spec.ClearField(account.FieldDeletedAt, field.TypeTime)
 	}
+	if value, ok := _u.mutation.QualityConfigVersion(); ok {
+		_spec.SetField(account.FieldQualityConfigVersion, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedQualityConfigVersion(); ok {
+		_spec.AddField(account.FieldQualityConfigVersion, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.QualityConfigChangedAt(); ok {
+		_spec.SetField(account.FieldQualityConfigChangedAt, field.TypeTime, value)
+	}
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(account.FieldName, field.TypeString, value)
 	}
@@ -1194,6 +1238,41 @@ func (_u *AccountUpdateOne) SetNillableDeletedAt(v *time.Time) *AccountUpdateOne
 // ClearDeletedAt clears the value of the "deleted_at" field.
 func (_u *AccountUpdateOne) ClearDeletedAt() *AccountUpdateOne {
 	_u.mutation.ClearDeletedAt()
+	return _u
+}
+
+// SetQualityConfigVersion sets the "quality_config_version" field.
+func (_u *AccountUpdateOne) SetQualityConfigVersion(v int64) *AccountUpdateOne {
+	_u.mutation.ResetQualityConfigVersion()
+	_u.mutation.SetQualityConfigVersion(v)
+	return _u
+}
+
+// SetNillableQualityConfigVersion sets the "quality_config_version" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableQualityConfigVersion(v *int64) *AccountUpdateOne {
+	if v != nil {
+		_u.SetQualityConfigVersion(*v)
+	}
+	return _u
+}
+
+// AddQualityConfigVersion adds value to the "quality_config_version" field.
+func (_u *AccountUpdateOne) AddQualityConfigVersion(v int64) *AccountUpdateOne {
+	_u.mutation.AddQualityConfigVersion(v)
+	return _u
+}
+
+// SetQualityConfigChangedAt sets the "quality_config_changed_at" field.
+func (_u *AccountUpdateOne) SetQualityConfigChangedAt(v time.Time) *AccountUpdateOne {
+	_u.mutation.SetQualityConfigChangedAt(v)
+	return _u
+}
+
+// SetNillableQualityConfigChangedAt sets the "quality_config_changed_at" field if the given value is not nil.
+func (_u *AccountUpdateOne) SetNillableQualityConfigChangedAt(v *time.Time) *AccountUpdateOne {
+	if v != nil {
+		_u.SetQualityConfigChangedAt(*v)
+	}
 	return _u
 }
 
@@ -1980,6 +2059,15 @@ func (_u *AccountUpdateOne) sqlSave(ctx context.Context) (_node *Account, err er
 	}
 	if _u.mutation.DeletedAtCleared() {
 		_spec.ClearField(account.FieldDeletedAt, field.TypeTime)
+	}
+	if value, ok := _u.mutation.QualityConfigVersion(); ok {
+		_spec.SetField(account.FieldQualityConfigVersion, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.AddedQualityConfigVersion(); ok {
+		_spec.AddField(account.FieldQualityConfigVersion, field.TypeInt64, value)
+	}
+	if value, ok := _u.mutation.QualityConfigChangedAt(); ok {
+		_spec.SetField(account.FieldQualityConfigChangedAt, field.TypeTime, value)
 	}
 	if value, ok := _u.mutation.Name(); ok {
 		_spec.SetField(account.FieldName, field.TypeString, value)

@@ -216,6 +216,12 @@ const routes: RouteRecordRaw[] = [
     }
   },
   {
+    path: '/canvas',
+    name: 'Canvas',
+    component: () => import('@/views/user/CanvasView.vue'),
+    meta: { requiresAuth: true, requiresAdmin: false, title: 'AI Canvas', titleKey: 'canvas.title' }
+  },
+  {
     path: '/batch-image',
     name: 'BatchImageGuide',
     alias: '/docs/batch-image',
@@ -638,6 +644,18 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/admin/affiliates',
     redirect: '/admin/affiliates/invites'
+  },
+  {
+    path: '/admin/promotions',
+    name: 'AdminPromotions',
+    component: () => import('@/views/admin/PromotionsView.vue'),
+    meta: {
+      requiresAuth: true,
+      requiresAdmin: true,
+      title: 'Promotion Statistics',
+      titleKey: 'admin.promotions.title',
+      descriptionKey: 'admin.promotions.description'
+    }
   },
   {
     path: '/admin/affiliates/invites',

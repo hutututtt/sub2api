@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"net/http/httptest"
 	"testing"
 
@@ -10,6 +11,27 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/tidwall/gjson"
 )
+
+func TestAccountQualityScopeSurvivesPolicyAndUsageWorker(t *testing.T) {
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest("POST", "/v1/responses", nil)
+	bindRequestedReasoningEffort(c, []byte(`{"model":"gpt-5","reasoning":{"effort":"max"}}`), "gpt-5")
+	c.Request = c.Request.WithContext(service.WithAccountQualityBodyScope(c.Request.Context(), "gpt-5", []byte(`{"reasoning":{"effort":"low"}}`), c.Request.URL.Path))
+	var failure, worker service.OpsInsertErrorLogInput
+	service.AttachAccountQualityErrorScope(c.Request.Context(), &failure)
+	wrapped, _ := wrapUsageRecordTaskContext(c.Request.Context(), func(ctx context.Context) {
+		service.AttachAccountQualityErrorScope(ctx, &worker)
+	})
+	wrapped(context.Background())
+	require.True(t, worker.QualityScopeKnown)
+	require.Equal(t, "max", worker.QualityReasoningEffort)
+	require.Equal(t, failure.QualityReasoningEffort, worker.QualityReasoningEffort)
+	// A later WebSocket turn must not inherit the first turn's effort.
+	turnScope := service.WithAccountQualityBodyScope(context.Background(), "gpt-5", []byte(`{"reasoning":{"effort":"low"}}`), "/v1/responses")
+	turnCtx := service.CopyAccountQualityRequestScope(c.Request.Context(), turnScope)
+	service.AttachAccountQualityErrorScope(usageRecordContext(turnCtx, context.Background()), &worker)
+	require.Equal(t, "low", worker.QualityReasoningEffort)
+}
 
 func TestCompositeTargetPlatformAllowedResolvesKnownAllowedModel(t *testing.T) {
 	gin.SetMode(gin.TestMode)

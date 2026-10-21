@@ -107,4 +107,34 @@ describe('HelpTooltip', () => {
 
     wrapper.unmount()
   })
+
+  it('positions fixed tooltips in viewport coordinates after page scroll', async () => {
+    const wrapper = mount(HelpTooltip, {
+      attachTo: document.body,
+      props: { content: 'positioned details' },
+    })
+    const trigger = wrapper.get('.group')
+    const element = trigger.element as HTMLElement
+    element.getBoundingClientRect = () => ({
+      top: 240,
+      left: 80,
+      width: 120,
+      height: 24,
+      right: 200,
+      bottom: 264,
+      x: 80,
+      y: 240,
+      toJSON: () => ({}),
+    }) as DOMRect
+    Object.defineProperty(window, 'scrollY', { configurable: true, value: 500 })
+    Object.defineProperty(window, 'scrollX', { configurable: true, value: 40 })
+
+    await trigger.trigger('mouseenter')
+    await nextTick()
+    const tooltip = getTooltipElement()
+    expect(tooltip.style.top).toBe('calc(232px)')
+    expect(tooltip.style.left).toBe('140px')
+
+    wrapper.unmount()
+  })
 })

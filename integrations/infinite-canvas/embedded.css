@@ -1,0 +1,281 @@
+:root {
+  --radius: 0.375rem;
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --background: #ffffff;
+  --foreground: #111827;
+  --card: #ffffff;
+  --card-foreground: #111827;
+  --popover: #ffffff;
+  --popover-foreground: #111827;
+  --border: #e5e7eb;
+  --input: #d1d5db;
+  --ring: #14b8a6;
+  --primary: #0d9488;
+  --primary-foreground: #ffffff;
+  --secondary: #f3f4f6;
+  --secondary-foreground: #374151;
+  --muted: #f9fafb;
+  --muted-foreground: #6b7280;
+  --accent: #f0fdfa;
+  --accent-foreground: #0f766e;
+  --sidebar: #ffffff;
+  --sidebar-foreground: #374151;
+  --sidebar-primary: #0d9488;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #f0fdfa;
+  --sidebar-accent-foreground: #0f766e;
+  --sidebar-border: #e5e7eb;
+  --sidebar-ring: #14b8a6;
+  --canvas-shadow: 0 4px 16px rgba(17, 24, 39, 0.06), 0 1px 3px rgba(17, 24, 39, 0.04);
+}
+
+.dark {
+  --background: #0f172a;
+  --foreground: #f1f5f9;
+  --card: #1e293b;
+  --card-foreground: #f1f5f9;
+  --popover: #1e293b;
+  --popover-foreground: #f1f5f9;
+  --border: #334155;
+  --input: #475569;
+  --ring: #2dd4bf;
+  --primary: #2dd4bf;
+  --primary-foreground: #042f2e;
+  --secondary: #334155;
+  --secondary-foreground: #e2e8f0;
+  --muted: #1e293b;
+  --muted-foreground: #94a3b8;
+  --accent: #134e4a;
+  --accent-foreground: #5eead4;
+  --sidebar: #1e293b;
+  --sidebar-foreground: #cbd5e1;
+  --sidebar-primary: #2dd4bf;
+  --sidebar-primary-foreground: #042f2e;
+  --sidebar-accent: #134e4a;
+  --sidebar-accent-foreground: #5eead4;
+  --sidebar-border: #334155;
+  --sidebar-ring: #2dd4bf;
+  --canvas-shadow: 0 4px 20px rgba(0, 0, 0, 0.2);
+}
+
+html, body, button, input, textarea, select {
+  font-family: var(--font-sans);
+  letter-spacing: 0;
+}
+
+button, a, input, textarea, select {
+  outline-offset: 3px;
+}
+
+button:focus-visible, a:focus-visible {
+  outline: 2px solid var(--ring);
+}
+
+.canvas-navigation {
+  display: flex;
+  flex-shrink: 0;
+  align-items: stretch;
+  gap: 24px;
+  height: 42px;
+  padding: 0 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
+}
+
+.canvas-navigation a {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border-bottom: 2px solid transparent;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  transition: color 150ms, border-color 150ms;
+}
+
+.canvas-navigation a:hover, .canvas-navigation a.active {
+  color: var(--primary);
+}
+
+.canvas-navigation a.active {
+  border-bottom-color: var(--primary);
+}
+
+.canvas-navigation .canvas-attribution {
+  margin-left: auto;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+[data-canvas-topbar] {
+  height: 52px;
+  padding: 0 12px;
+}
+
+[data-canvas-topbar] button, [data-canvas-topbar] input {
+  font-size: 14px;
+  border-radius: 6px;
+}
+
+[data-canvas-topbar] input {
+  min-width: 0;
+  width: min(240px, 50vw);
+}
+
+[data-canvas-bottom-toolbar] > .thin-scrollbar,
+[data-canvas-zoom-controls] > div:first-child {
+  height: 46px;
+  border-radius: 8px;
+  box-shadow: var(--canvas-shadow) !important;
+  backdrop-filter: none;
+}
+
+[data-canvas-bottom-toolbar] > .thin-scrollbar {
+  padding: 0 8px;
+}
+
+[data-canvas-bottom-toolbar] button,
+[data-canvas-zoom-controls] button {
+  border-radius: 6px;
+}
+
+[data-canvas-node-tools] {
+  height: 38px;
+  border-radius: 8px;
+  border-color: var(--border);
+  background: var(--card);
+  color: var(--foreground);
+  box-shadow: var(--canvas-shadow);
+}
+
+.node-element .rounded-3xl {
+  border-radius: 8px;
+}
+
+[data-canvas-prompt-panel] {
+  border-radius: 8px;
+  padding: 12px;
+  box-shadow: var(--canvas-shadow);
+  backdrop-filter: none;
+}
+
+.canvas-composer {
+  position: fixed;
+  right: 20px;
+  bottom: 80px;
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  width: min(520px, calc(100vw - 40px));
+  max-height: calc(100dvh - 160px);
+}
+
+.canvas-composer-mobile {
+  left: 12px;
+  right: 12px;
+  bottom: 76px;
+  width: auto;
+  max-height: calc(100dvh - 130px);
+}
+
+[data-canvas-prompt-panel] textarea {
+  height: 116px;
+  padding: 8px;
+  border-radius: 6px;
+  line-height: 1.6;
+}
+
+[data-canvas-prompt-panel] textarea::placeholder {
+  color: var(--muted-foreground);
+}
+
+[data-canvas-prompt-actions] {
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+[data-canvas-prompt-actions] > div {
+  flex: 1;
+  gap: 6px;
+}
+
+[data-canvas-prompt-panel] .ant-btn {
+  height: 34px !important;
+  border-radius: 6px !important;
+  font-size: 12px;
+}
+
+[data-canvas-generate] {
+  min-width: 38px !important;
+  padding: 0 10px !important;
+}
+
+[data-canvas-generate]:not(:disabled):not(.ant-btn-dangerous) {
+  background: #0d9488;
+  color: #ffffff;
+}
+
+[data-canvas-generate]:not(:disabled):not(.ant-btn-dangerous):hover {
+  background: #0f766e;
+}
+
+/* The upstream library views use the same surfaces as the embedded editor. */
+.ai-title-aurora {
+  background: none;
+  color: var(--foreground);
+  animation: none;
+}
+
+@media (max-width: 767px) {
+  .canvas-navigation {
+    gap: 20px;
+    padding: 0 12px;
+  }
+  .canvas-attribution span {
+    display: none;
+  }
+  [data-canvas-bottom-toolbar] {
+    left: 12px !important;
+    right: 12px !important;
+    bottom: 12px;
+  }
+  [data-canvas-zoom-controls] {
+    left: 12px;
+    bottom: 70px;
+  }
+  [data-canvas-topbar] button.max-w-\[280px\] {
+    max-width: calc(100vw - 108px);
+  }
+  [data-canvas-prompt-panel] textarea {
+    height: 100px;
+  }
+  [data-canvas-prompt-actions] {
+    display: grid;
+    grid-template-columns: 32px 32px minmax(0, 1fr) 38px;
+    gap: 8px;
+  }
+  [data-canvas-prompt-actions] > div {
+    display: contents;
+  }
+  [data-canvas-prompt-actions] .canvas-composer-model-picker {
+    grid-column: 3 / 5;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+  }
+  [data-canvas-prompt-actions] > div > span:last-child {
+    grid-column: 1 / 4;
+    grid-row: 2;
+  }
+  [data-canvas-generate] {
+    grid-column: 4;
+    grid-row: 2;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .canvas-navigation a {
+    transition: none;
+  }
+}

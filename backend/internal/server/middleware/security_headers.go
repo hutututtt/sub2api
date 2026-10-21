@@ -130,6 +130,24 @@ func SecurityHeaders(cfg config.CSPConfig, getFrameSrcOrigins func() []string) g
 		c.Header("X-Content-Type-Options", "nosniff")
 		c.Header("X-Frame-Options", "DENY")
 		c.Header("Referrer-Policy", "strict-origin-when-cross-origin")
+		switch c.Request.URL.Path {
+		case "/canvas-app", "/canvas-app/", "/canvas-app/index.html":
+			c.Header("X-Frame-Options", "SAMEORIGIN")
+			// Connected image nodes hydrate browser-local reference images via fetch(blob:).
+			if !directiveHasValue(finalPolicy, "connect-src", "blob:") {
+				finalPolicy = addToDirective(finalPolicy, "connect-src", "blob:")
+			}
+			directives := strings.Split(finalPolicy, ";")
+			filtered := directives[:0]
+			for _, directive := range directives {
+				fields := strings.Fields(directive)
+				if len(fields) > 0 && fields[0] == "frame-ancestors" {
+					continue
+				}
+				filtered = append(filtered, directive)
+			}
+			finalPolicy = strings.Join(filtered, ";") + "; frame-ancestors 'self'"
+		}
 		if isAPIRoutePath(c) {
 			c.Next()
 			return

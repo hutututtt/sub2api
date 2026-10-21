@@ -1,6 +1,11 @@
 <template>
   <AppLayout>
-    <div class="mb-5 flex justify-end gap-1"><button class="btn" :class="groupedView ? 'btn-primary' : 'btn-secondary'" @click="groupedView = true">{{ t('accountQuality.groupView') }}</button><button class="btn" :class="!groupedView ? 'btn-primary' : 'btn-secondary'" @click="groupedView = false">{{ t('accountQuality.listView') }}</button></div>
+    <div v-if="!groupedView" class="mb-4 flex justify-end">
+      <div class="account-view-switch" :aria-label="t('accountQuality.groupView')">
+        <button :aria-pressed="false" @click="groupedView = true"><Icon name="grid" size="sm" />{{ t('accountQuality.groupView') }}</button>
+        <button class="is-active" :aria-pressed="true" @click="groupedView = false"><Icon name="menu" size="sm" />{{ t('accountQuality.listView') }}</button>
+      </div>
+    </div>
     <div v-if="groupedView"><AccountBulkActionsBar v-if="selIds.length" :hide-filtered-controls="true"
           :selected-ids="selIds"
           :total-results="selIds.length"
@@ -17,7 +22,25 @@
           @select-all-results="handleSelectAllResults"
           @toggle-schedulable="handleBulkToggleSchedulable"
         />
-<AccountQualityGroups :refresh-token="qualityRevision" :selected-ids="selIds" @selection="handleQualitySelection" @create="showCreate=true" @edit="id=>handleEdit({id} as AccountListItem)" @test="id=>handleTest({id} as AccountListItem)" @scheduling-change="(id, schedulable) => updateSchedulableInList([id], schedulable)"/></div>
+      <AccountQualityGroups
+        :refresh-token="qualityRevision"
+        :pause-auto-refresh="isAnyModalOpen || menu.show || showAccountToolsDropdown || showAutoRefreshDropdown"
+        :selected-ids="selIds"
+        @selection="handleQualitySelection"
+        @create="showCreate = true"
+        @edit="id => handleEdit({ id } as AccountListItem)"
+        @test="id => handleTest({ id } as AccountListItem)"
+        @show-temp-unsched="handleQualityTempUnsched"
+        @scheduling-change="(id, schedulable) => updateSchedulableInList([id], schedulable)"
+      >
+        <template #view-switch>
+          <div class="account-view-switch" :aria-label="t('accountQuality.groupView')">
+            <button class="is-active" :aria-pressed="true" @click="groupedView = true"><Icon name="grid" size="sm" />{{ t('accountQuality.groupView') }}</button>
+            <button :aria-pressed="false" @click="groupedView = false"><Icon name="menu" size="sm" />{{ t('accountQuality.listView') }}</button>
+          </div>
+        </template>
+      </AccountQualityGroups>
+    </div>
     <TablePageLayout v-else>
       <template #filters>
         <div class="flex flex-wrap-reverse items-start justify-between gap-3">
@@ -241,7 +264,13 @@
             <span class="font-mono text-xs text-gray-500 dark:text-gray-400">#{{ value }}</span>
           </template>
           <template #cell-name="{ row, value }">
-            <div class="flex flex-col">
+            <div
+              class="flex flex-col"
+              :class="{
+                'account-name-state--error': row.status === 'error',
+                'account-name-state--disabled': row.status !== 'error' && (row.status !== 'active' || !row.schedulable)
+              }"
+            >
               <HelpTooltip
                 v-if="accountHomepageUrl(row)"
                 :content="accountHomepageUrl(row)"
@@ -253,13 +282,13 @@
                     :href="accountHomepageUrl(row)"
                     target="_blank"
                     rel="noopener noreferrer"
-                    class="border-b border-dotted border-gray-300 font-medium text-gray-900 dark:border-dark-600 dark:text-white"
+                    class="account-name-label border-b border-dotted border-gray-300 font-medium text-gray-900 dark:border-dark-600 dark:text-white"
                   >
                     {{ value }}
                   </a>
                 </template>
               </HelpTooltip>
-              <span v-else class="font-medium text-gray-900 dark:text-white">{{ value }}</span>
+              <span v-else class="account-name-label font-medium text-gray-900 dark:text-white">{{ value }}</span>
               <span
                 v-if="accountDisplayEmail(row)"
                 class="text-xs text-gray-500 dark:text-gray-400 truncate max-w-[200px]"
@@ -2496,10 +2525,18 @@ const handleToggleSchedulable = async (a: Account) => {
   }
 }
 const handleShowTempUnsched = (a: Account) => { tempUnschedAcc.value = a; showTempUnsched.value = true }
+const handleQualityTempUnsched = async (id: number) => {
+  try {
+    handleShowTempUnsched(await adminAPI.accounts.getById(id))
+  } catch (error: any) {
+    appStore.showError(error?.message || t('admin.accounts.tempUnschedulable.failedToLoad'))
+  }
+}
 const handleTempUnschedReset = async (updated: Account) => {
   showTempUnsched.value = false
   tempUnschedAcc.value = null
   patchAccountInList(updated)
+  qualityRevision.value++
   enterAutoRefreshSilentWindow()
 }
 const formatExpiresAt = (value: number | null) => {
@@ -2615,6 +2652,26 @@ onUnmounted(() => {
 </script>
 
 <style scoped>
+.account-name-state--error .account-name-label {
+  @apply border-red-300 text-red-600 dark:border-red-700 dark:text-red-400;
+}
+
+.account-name-state--disabled .account-name-label {
+  @apply border-yellow-300 text-yellow-600 dark:border-yellow-700 dark:text-yellow-400;
+}
+
+.account-view-switch {
+  @apply inline-flex shrink-0 items-center gap-0.5 rounded-lg border border-gray-200/80 bg-gray-100/80 p-1 dark:border-dark-600 dark:bg-dark-900/60;
+}
+
+.account-view-switch button {
+  @apply inline-flex h-7 items-center justify-center gap-1.5 whitespace-nowrap rounded-md px-2.5 text-xs font-medium text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary-500 dark:text-gray-400 dark:hover:text-gray-100;
+}
+
+.account-view-switch button.is-active {
+  @apply bg-white text-gray-900 shadow-sm dark:bg-dark-700 dark:text-white;
+}
+
 .account-tools-menu-item {
   @apply flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm text-gray-700 transition-colors hover:bg-gray-100 dark:text-gray-200 dark:hover:bg-dark-700;
 }

@@ -12,7 +12,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/fstest"
 
+	"github.com/Wei-Shaw/sub2api/internal/config"
 	"github.com/Wei-Shaw/sub2api/internal/server/middleware"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -342,7 +344,6 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 		w := httptest.NewRecorder()
 		c, _ := gin.CreateTestContext(w)
 		c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
-		c.Set(middleware.CSPNonceKey, "nonce123")
 
 		server.serveIndexHTML(c)
 
@@ -362,10 +363,6 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 
 		// Use a real router for proper 304 handling
 		router := gin.New()
-		router.Use(func(c *gin.Context) {
-			c.Set(middleware.CSPNonceKey, "test-nonce")
-			c.Next()
-		})
 		router.Use(server.Middleware())
 
 		// First request to populate cache and get ETag
@@ -400,7 +397,40 @@ func TestFrontendServer_ServeIndexHTML(t *testing.T) {
 
 		server.serveIndexHTML(c)
 
-		assert.Equal(t, "no-cache", w.Header().Get("Cache-Control"))
+		assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+		assert.Empty(t, w.Header().Get("ETag"))
+	})
+
+	t.Run("nonce_html_ignores_old_etag_and_matches_fresh_csp_on_every_request", func(t *testing.T) {
+		provider := &mockSettingsProvider{settings: map[string]string{"test": "value"}}
+		server, err := NewFrontendServer(provider)
+		require.NoError(t, err)
+		router := gin.New()
+		router.Use(middleware.SecurityHeaders(config.CSPConfig{
+			Enabled: true,
+			Policy:  "default-src 'self'; script-src 'self' __CSP_NONCE__",
+		}, nil))
+		router.Use(server.Middleware())
+		previousNonce := ""
+		for range 3 {
+			w := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodGet, "/dashboard", nil)
+			if cached := server.cache.Get(); cached != nil {
+				req.Header.Set("If-None-Match", cached.ETag)
+			}
+			router.ServeHTTP(w, req)
+			require.Equal(t, http.StatusOK, w.Code)
+			assert.Equal(t, "no-store", w.Header().Get("Cache-Control"))
+			assert.Empty(t, w.Header().Get("ETag"))
+			csp := w.Header().Get("Content-Security-Policy")
+			start := strings.Index(csp, "'nonce-")
+			require.GreaterOrEqual(t, start, 0)
+			nonce := strings.SplitN(csp[start+7:], "'", 2)[0]
+			assert.Contains(t, w.Body.String(), `nonce="`+nonce+`"`)
+			assert.NotEqual(t, previousNonce, nonce)
+			previousNonce = nonce
+		}
+		assert.Equal(t, 1, provider.called, "internal template cache remains effective")
 	})
 
 	t.Run("fallback_on_settings_error", func(t *testing.T) {
@@ -694,6 +724,7 @@ func TestEmbeddedFrontendBypassesBareVideoAPIRoutes(t *testing.T) {
 
 func TestEmbeddedFrontendBypassesBareAPIAliases(t *testing.T) {
 	for _, path := range []string{
+		"/p/linux-sb",
 		"/chat/completions",
 		"/embeddings",
 		"/messages/count_tokens",
@@ -723,6 +754,50 @@ func TestEmbeddedFrontendBypassesBareAPIAliases(t *testing.T) {
 		"/v3/other",
 	} {
 		require.False(t, shouldBypassEmbeddedFrontend(path), "path=%s", path)
+	}
+}
+
+func TestEmbeddedFrontendLetsPromotionRedirectReachBackend(t *testing.T) {
+	provider := &mockSettingsProvider{settings: map[string]string{"test": "value"}}
+	server, err := NewFrontendServer(provider)
+	require.NoError(t, err)
+
+	router := gin.New()
+	router.Use(server.Middleware())
+	router.GET("/p/:code", func(c *gin.Context) {
+		c.String(http.StatusFound, c.Param("code"))
+	})
+
+	response := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/p/linux-sb", nil)
+	router.ServeHTTP(response, request)
+
+	assert.Equal(t, http.StatusFound, response.Code)
+	assert.Equal(t, "linux-sb", response.Body.String())
+}
+
+func TestCanvasIndexServedWithoutRedirectOrSPAFallback(t *testing.T) {
+	canvasHTML := []byte(`<html><div id="root">canvas</div></html>`)
+	distFS := fstest.MapFS{
+		"index.html":            {Data: []byte(`<html>host</html>`)},
+		"canvas-app/index.html": {Data: canvasHTML},
+	}
+	server := &FrontendServer{distFS: distFS, fileServer: http.FileServer(http.FS(distFS))}
+	router := gin.New()
+	router.Use(middleware.SecurityHeaders(config.CSPConfig{Enabled: true}, nil))
+	router.Use(server.Middleware())
+	for _, path := range []string{"/canvas-app", "/canvas-app/", "/canvas-app/index.html?release=test"} {
+		t.Run(path, func(t *testing.T) {
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+			require.Equal(t, http.StatusOK, response.Code)
+			assert.Equal(t, canvasHTML, response.Body.Bytes())
+			assert.Empty(t, response.Header().Get("Location"))
+			assert.Equal(t, "no-cache", response.Header().Get("Cache-Control"))
+			assert.Equal(t, "SAMEORIGIN", response.Header().Get("X-Frame-Options"))
+			assert.Contains(t, response.Header().Get("Content-Security-Policy"), "frame-ancestors 'self'")
+			assert.NotContains(t, response.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'")
+		})
 	}
 }
 

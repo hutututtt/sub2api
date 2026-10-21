@@ -17,6 +17,43 @@ func init() {
 	gin.SetMode(gin.TestMode)
 }
 
+func TestCanvasFramePolicyIsLimitedToCanvasIndex(t *testing.T) {
+	for _, path := range []string{"/canvas", "/admin/accounts", "/api/v1/auth/me", "/canvas-app/assets/app.js", "/canvas-app/index.html/other"} {
+		t.Run(path, func(t *testing.T) {
+			router := gin.New()
+			router.Use(SecurityHeaders(config.CSPConfig{Enabled: true}, nil))
+			router.NoRoute(func(c *gin.Context) { c.Status(http.StatusOK) })
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+			assert.Equal(t, "DENY", response.Header().Get("X-Frame-Options"))
+			assert.Contains(t, response.Header().Get("Content-Security-Policy"), "frame-ancestors 'none'")
+			assert.False(t, directiveHasValue(response.Header().Get("Content-Security-Policy"), "connect-src", "blob:"))
+		})
+	}
+}
+
+func TestCanvasReferenceImageBlobFetchPolicy(t *testing.T) {
+	for _, path := range []string{"/canvas-app", "/canvas-app/", "/canvas-app/index.html?release=test"} {
+		for _, policy := range []string{"", "default-src 'self'; connect-src 'self' https:; frame-ancestors 'none'", "default-src 'self'; connect-src 'self' https: blob:; frame-ancestors 'none'"} {
+			t.Run(path+policy, func(t *testing.T) {
+				router := gin.New()
+				router.Use(SecurityHeaders(config.CSPConfig{Enabled: true, Policy: policy}, nil))
+				router.NoRoute(func(c *gin.Context) { c.Status(http.StatusOK) })
+				response := httptest.NewRecorder()
+				router.ServeHTTP(response, httptest.NewRequest(http.MethodGet, path, nil))
+				actual := response.Header().Get("Content-Security-Policy")
+				assert.True(t, directiveHasValue(actual, "connect-src", "blob:"))
+				assert.True(t, directiveHasValue(actual, "connect-src", "'self'"))
+				assert.True(t, directiveHasValue(actual, "connect-src", "https:"))
+				assert.True(t, directiveHasValue(actual, "connect-src", TencentCaptchaDomain))
+				assert.False(t, directiveHasValue(actual, "script-src", "blob:"))
+				assert.True(t, directiveHasValue(actual, "frame-ancestors", "'self'"))
+				assert.Equal(t, "SAMEORIGIN", response.Header().Get("X-Frame-Options"))
+			})
+		}
+	}
+}
+
 func TestGenerateNonce(t *testing.T) {
 	t.Run("generates_valid_base64_string", func(t *testing.T) {
 		nonce, err := GenerateNonce()

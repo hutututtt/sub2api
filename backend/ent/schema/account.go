@@ -5,6 +5,7 @@ package schema
 import (
 	"github.com/Wei-Shaw/sub2api/ent/schema/mixins"
 	"github.com/Wei-Shaw/sub2api/internal/domain"
+	"time"
 
 	"entgo.io/ent"
 	"entgo.io/ent/dialect"
@@ -50,6 +51,9 @@ func (Account) Mixin() []ent.Mixin {
 // Fields 定义账户实体的所有字段。
 func (Account) Fields() []ent.Field {
 	return []ent.Field{
+		// Updated by the database trigger when upstream identity changes.
+		field.Int64("quality_config_version").Default(1),
+		field.Time("quality_config_changed_at").Default(time.Now),
 		// name: 账户显示名称，用于在界面中标识账户
 		field.String("name").
 			MaxLen(100).

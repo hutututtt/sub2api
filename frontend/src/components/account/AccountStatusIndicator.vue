@@ -33,33 +33,15 @@
     </template>
 
     <!-- Error Info Indicator -->
-    <div v-if="hasError && account.error_message" class="group/error relative">
-      <svg
-        class="h-4 w-4 cursor-help text-red-500 transition-colors hover:text-red-600 dark:text-red-400 dark:hover:text-red-300"
-        fill="none"
-        viewBox="0 0 24 24"
-        stroke="currentColor"
-        stroke-width="2"
-      >
-        <path
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          d="M9.879 7.519c1.171-1.025 3.071-1.025 4.242 0 1.172 1.025 1.172 2.687 0 3.712-.203.179-.43.326-.67.442-.745.361-1.45.999-1.45 1.827v.75M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9 5.25h.008v.008H12v-.008z"
-        />
-      </svg>
-      <!-- Tooltip - 向下显示 -->
-      <div
-        class="invisible absolute left-0 top-full z-[100] mt-1.5 min-w-[200px] max-w-[300px] rounded-lg bg-gray-800 px-3 py-2 text-xs text-white opacity-0 shadow-xl transition-all duration-200 group-hover/error:visible group-hover/error:opacity-100 dark:bg-gray-900"
-      >
-        <div class="whitespace-pre-wrap break-words leading-relaxed text-gray-300">
-          {{ account.error_message }}
-        </div>
-        <!-- 上方小三角 -->
-        <div
-          class="absolute bottom-full left-3 border-[6px] border-transparent border-b-gray-800 dark:border-b-gray-900"
-        ></div>
-      </div>
-    </div>
+    <HelpTooltip
+      v-if="hasError && account.error_message"
+      :content="account.error_message"
+      width-class="w-64 max-w-[calc(100vw-2rem)] whitespace-pre-wrap break-words"
+    >
+      <template #trigger>
+        <Icon name="questionCircle" size="sm" class="cursor-help text-red-500 dark:text-red-400" />
+      </template>
+    </HelpTooltip>
 
     <!-- Rate Limit Indicator (429) -->
     <div v-if="isRateLimited" class="group relative">
@@ -158,21 +140,22 @@
   </div>
 </template>
 
-<script setup lang="ts">
+<script setup lang="ts" generic="T extends AccountStatusData">
 import { computed } from 'vue'
 import { useI18n } from 'vue-i18n'
 import Icon from '@/components/icons/Icon.vue'
-import type { Account } from '@/types'
+import HelpTooltip from '@/components/common/HelpTooltip.vue'
+import type { AccountStatusData } from '@/types'
 import { formatCountdown, formatDateTime, formatDateTimeToMinute, formatCountdownWithSuffix, formatTime } from '@/utils/format'
 
 const { t } = useI18n()
 
 const props = defineProps<{
-  account: Account
+  account: T
 }>()
 
 const emit = defineEmits<{
-  (e: 'show-temp-unsched', account: Account): void
+  (e: 'show-temp-unsched', account: T): void
 }>()
 
 // Computed: is rate limited (429)

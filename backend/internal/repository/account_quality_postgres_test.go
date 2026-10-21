@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	_ "github.com/lib/pq"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -57,11 +58,11 @@ func TestAccountQualityPostgresContracts(t *testing.T) {
 	defer db.Close()
 	db.SetMaxOpenConns(1)
 	exec(`CREATE TABLE groups(id BIGINT PRIMARY KEY,name TEXT,platform TEXT,deleted_at TIMESTAMPTZ);
- CREATE TABLE accounts(id BIGINT PRIMARY KEY,name TEXT,platform TEXT,type TEXT,status TEXT,schedulable BOOLEAN,priority INT,concurrency INT,deleted_at TIMESTAMPTZ);
+ CREATE TABLE accounts(id BIGINT PRIMARY KEY,name TEXT,platform TEXT,type TEXT,status TEXT,schedulable BOOLEAN,priority INT,concurrency INT,deleted_at TIMESTAMPTZ,credentials JSONB NOT NULL DEFAULT '{}',proxy_id BIGINT,parent_account_id BIGINT);
  CREATE TABLE account_groups(account_id BIGINT,group_id BIGINT);
  CREATE TABLE usage_logs(id BIGSERIAL PRIMARY KEY,account_id BIGINT,group_id BIGINT,request_id TEXT,model TEXT,requested_model TEXT,reasoning_effort TEXT,requested_reasoning_effort TEXT,service_tier TEXT,inbound_endpoint TEXT,first_token_ms INT,input_tokens INT,cache_creation_tokens INT,cache_read_tokens INT,created_at TIMESTAMPTZ DEFAULT NOW());
  CREATE TABLE ops_error_logs(id BIGSERIAL PRIMARY KEY,account_id BIGINT,group_id BIGINT,request_id TEXT,model TEXT,requested_model TEXT,request_path TEXT,error_owner TEXT,is_business_limited BOOLEAN DEFAULT false,created_at TIMESTAMPTZ DEFAULT NOW());`)
-	for _, name := range []string{"246_account_quality.sql", "247_account_quality_evidence.sql", "248_account_quality_error_scope.sql"} {
+	for _, name := range []string{"246_account_quality.sql", "247_account_quality_evidence.sql", "248_account_quality_error_scope.sql", "249_account_quality_relay.sql", "250_account_quality_config_version.sql"} {
 		raw, e := os.ReadFile(filepath.Join("..", "..", "migrations", name))
 		if e != nil {
 			t.Fatal(e)
@@ -69,11 +70,18 @@ func TestAccountQualityPostgresContracts(t *testing.T) {
 		exec(string(raw))
 	}
 	exec("INSERT INTO groups VALUES(1,'fixture A','openai',NULL),(2,'fixture B','openai',NULL)")
-	exec("INSERT INTO accounts VALUES(1,'fixture account','openai','apikey','active',true,1,2,NULL),(2,'second fixture','openai','apikey','active',true,1,2,NULL)")
+	exec("INSERT INTO accounts(id,name,platform,type,status,schedulable,priority,concurrency,deleted_at) VALUES(1,'fixture account','openai','apikey','active',true,1,2,NULL),(2,'second fixture','openai','apikey','active',true,1,2,NULL)")
 	exec("INSERT INTO account_groups VALUES(1,1),(2,1),(1,2)")
 	for i := 0; i < 35; i++ {
-		exec("INSERT INTO usage_logs(account_id,group_id,request_id,model,requested_model,reasoning_effort,requested_reasoning_effort,inbound_endpoint,first_token_ms,input_tokens,cache_creation_tokens,cache_read_tokens) VALUES(1,1,$1,'fixture-model','fixture-model','low','low','/v1/responses',$2,10,0,90)", fmt.Sprint("success-", i), 1000+i)
+		age, input, creation, read := 2, 5, 5, 90
+		if i < 5 {
+			age, input, creation, read = 4, 1000, 1000, 0
+		}
+		exec("INSERT INTO usage_logs(account_id,group_id,request_id,model,requested_model,reasoning_effort,requested_reasoning_effort,inbound_endpoint,first_token_ms,input_tokens,cache_creation_tokens,cache_read_tokens,created_at) VALUES(1,1,$1,'fixture-model','fixture-model','low','low','/v1/responses',$2,$3,$4,$5,NOW()-$6*interval '1 hour')", fmt.Sprint("success-", i), 1000+i, input, creation, read, age)
 	}
+	exec(`INSERT INTO usage_logs(account_id,group_id,request_id,model,requested_model,requested_reasoning_effort,inbound_endpoint,first_token_ms,input_tokens,cache_creation_tokens,cache_read_tokens,created_at) VALUES
+ (1,1,'outside-day','fixture-model','fixture-model','low','/v1/responses',2000,10000,0,0,NOW()-interval '25 hours'),
+ (2,1,'older-cache','fixture-model','fixture-model','low','/v1/responses',2000,10,0,90,NOW()-interval '4 hours')`)
 	exec(`INSERT INTO ops_error_logs(account_id,group_id,request_id,model,request_path,error_owner,is_business_limited,quality_reasoning_effort,quality_scope_known) VALUES
  (1,1,'failed','fixture-model','/v1/responses','upstream',false,'low',true),
  (1,1,'limited','fixture-model','/v1/responses','client',true,NULL,false),
@@ -99,9 +107,30 @@ func TestAccountQualityPostgresContracts(t *testing.T) {
 			a = r
 		}
 	}
-	if a.Requests != 35 || a.TTFTSamples != 35 || a.Failures != 1 || a.CacheRate == nil || *a.CacheRate != 90 {
+	expectedCache := 100.0 * 2700 / 13000
+	if a.Requests != 35 || a.TTFTSamples != 35 || a.Failures != 1 || a.CacheSamples != 35 || a.CacheRate == nil || math.Abs(*a.CacheRate-expectedCache) > .000001 {
 		t.Fatalf("bad business aggregation: %+v", a)
 	}
+	for _, r := range rows {
+		if r.ID == 2 && (r.Requests != 1 || r.TTFTSamples != 1 || r.CacheSamples != 1 || r.CacheRate == nil || *r.CacheRate != 90) {
+			t.Fatalf("four-hour-old traffic must contribute to 24-hour cache metrics: %+v", r)
+		}
+	}
+	t.Run("CacheWithoutInputUsageStaysUnknown", func(t *testing.T) {
+		exec("UPDATE usage_logs SET input_tokens=0,cache_read_tokens=0 WHERE request_id='older-cache'")
+		defer exec("UPDATE usage_logs SET input_tokens=10,cache_read_tokens=90 WHERE request_id='older-cache'")
+		exec(`INSERT INTO usage_logs(account_id,group_id,request_id,model,requested_model,requested_reasoning_effort,inbound_endpoint,input_tokens,cache_creation_tokens,cache_read_tokens) VALUES(2,1,'zero-input','fixture-model','fixture-model','low','/v1/responses',0,0,0)`)
+		defer exec("DELETE FROM usage_logs WHERE request_id='zero-input'")
+		zeroRows, err := repo.Rows(ctx, 1, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, r := range zeroRows {
+			if r.ID == 2 && (r.CacheSamples != 2 || r.CacheRate != nil) {
+				t.Fatalf("zero input usage must not report a zero cache rate: %+v", r)
+			}
+		}
+	})
 	other := p
 	other.Endpoint = "chat_completions"
 	scoped, err := repo.Rows(ctx, 1, other)
@@ -113,6 +142,47 @@ func TestAccountQualityPostgresContracts(t *testing.T) {
 			t.Fatalf("protocol scopes mixed: %+v", r)
 		}
 	}
+	t.Run("BusinessStatisticsIndependentOfInspection", func(t *testing.T) {
+		exec(`INSERT INTO usage_logs(account_id,group_id,request_id,model,requested_model,requested_reasoning_effort,service_tier,inbound_endpoint,first_token_ms,input_tokens,cache_creation_tokens,cache_read_tokens,created_at) VALUES
+		 (1,1,'business-other','other-model','other-model','xhigh','priority','/v1/chat/completions',2500,9000,0,1000,NOW()-interval '4 hours'),
+		 (1,1,'business-effort','fixture-model','fixture-model','high','flex','/v1/responses',0,0,0,100,NOW()-interval '23 hours'),
+		 (1,1,'business-legacy','other-model','other-model',NULL,NULL,NULL,1500,0,0,900,NOW()-interval '2 hours'),
+		 (1,2,'business-other-group','other-model','other-model','xhigh','priority','/v1/responses',1500,100000,0,0,NOW()),
+		 (1,1,'business-outside','other-model','other-model','xhigh','priority','/v1/responses',1500,100000,0,0,NOW()-interval '25 hours')`)
+		defer exec("DELETE FROM usage_logs WHERE request_id LIKE 'business-%'")
+		exec(`INSERT INTO ops_error_logs(account_id,group_id,request_id,model,request_path,error_owner,quality_scope_known) VALUES
+		 (1,1,'business-error','other-model','','upstream',false),
+		 (1,1,'business-error','other-model','','upstream',false),
+		 (1,1,'business-unknown',NULL,'','upstream',false),
+		 (1,1,'business-other','other-model','','upstream',false),
+		 (1,1,'business-client','other-model','','client',false)`)
+		defer exec("DELETE FROM ops_error_logs WHERE request_id LIKE 'business-%'")
+		businessRows, e := repo.Rows(ctx, 1, p, service.AccountQualityObservationScope{})
+		if e != nil {
+			t.Fatal(e)
+		}
+		business := businessRows[0]
+		if business.Requests != 38 || business.TTFTSamples != 37 || business.CacheSamples != 38 || business.Failures != 3 || business.UnknownFailureScope != 0 || business.CacheRate == nil || math.Abs(*business.CacheRate-100.0*4700/24000) > .000001 {
+			t.Fatalf("business statistics dropped model/effort/tier/protocol samples or averaged percentages: %+v", business)
+		}
+		filtered, e := repo.Rows(ctx, 1, p, service.AccountQualityObservationScope{Model: "other-model"})
+		if e != nil {
+			t.Fatal(e)
+		}
+		if got := filtered[0]; got.Requests != 2 || got.CacheSamples != 2 || got.Failures != 1 || got.UnknownFailureScope != 1 || got.CacheRate == nil || math.Abs(*got.CacheRate-100.0*1900/10900) > .000001 {
+			t.Fatalf("independent model filter or unknown error coverage incorrect: %+v", got)
+		}
+		exec("UPDATE accounts SET quality_config_changed_at=NOW()-interval '1 hour' WHERE id=1")
+		defer exec("UPDATE accounts SET quality_config_changed_at='1970-01-01' WHERE id=1")
+		businessRows, e = repo.Rows(ctx, 1, p, service.AccountQualityObservationScope{})
+		if e != nil || businessRows[0].Requests != 38 {
+			t.Fatalf("business history disappeared after configuration change: %+v / %v", businessRows, e)
+		}
+		routingRows, e := repo.Rows(ctx, 1, p)
+		if e != nil || routingRows[0].Requests != 0 {
+			t.Fatalf("routing must still reject performance from the previous configuration: %+v / %v", routingRows, e)
+		}
+	})
 	run, err := repo.StartRun(ctx, 1, p, 3, "modeltrace", false)
 	if err != nil {
 		t.Fatal(err)
@@ -121,7 +191,7 @@ func TestAccountQualityPostgresContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	evidence := json.RawMessage(`{"bank_revision":"fixture-hash","expected_model":"fixture-model","attribution":{"prediction":"fixture-model","probability":0.9}}`)
-	result := &service.AccountQualityResult{RunID: run.ID, GroupID: 1, AccountID: 1, Model: p.Model, Effort: p.Effort, Endpoint: p.Endpoint, Benchmark: "modeltrace-v1", Verdict: "consistent", Evidence: evidence, RequestsUsed: 3}
+	result := &service.AccountQualityResult{ConfigVersion: 1, RunID: run.ID, GroupID: 1, AccountID: 1, Model: p.Model, Effort: p.Effort, Endpoint: p.Endpoint, Benchmark: "modeltrace-v1", Verdict: "consistent", Evidence: evidence, RequestsUsed: 3}
 	if err = repo.AddResult(ctx, result); err != nil {
 		t.Fatal(err)
 	}
@@ -151,7 +221,7 @@ func TestAccountQualityPostgresContracts(t *testing.T) {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	if err = repo.SaveWeights(ctx, 1, p.ScopeKey(), map[int64]service.AccountQualityStoredWeight{1: {Multiplier: .7, UpdatedAt: now}}); err != nil {
+	if err = repo.SaveWeights(ctx, 1, p.ScopeKey(), map[int64]service.AccountQualityStoredWeight{1: {Multiplier: .7, UpdatedAt: now, ConfigVersion: 1}}); err != nil {
 		t.Fatal(err)
 	}
 	weights, err := repo.LoadWeights(ctx, 1, p.ScopeKey())
@@ -178,9 +248,6 @@ func TestAccountQualityPostgresContracts(t *testing.T) {
 			raw, _ := io.ReadAll(io.LimitReader(r.Body, 200000))
 			prompt := string(raw)
 			answer := "<answer>21</answer>"
-			if strings.Contains(prompt, "允许预先选定") {
-				answer = "<answer>99999999</answer>"
-			}
 			if strings.Contains(prompt, "1 到 355") {
 				answer = strings.Repeat("42,", 330)
 			}
@@ -226,27 +293,63 @@ func TestAccountQualityPostgresContracts(t *testing.T) {
 			t.Fatal("local inspection did not reach a terminal state")
 			return service.AccountQualityRun{}
 		}
-		candy, err := runner.Run(ctx, 1, 1)
+		preflight, err := runner.Run(ctx, 1, 1)
 		if err != nil {
 			t.Fatal(err)
 		}
-		candyDone := wait(candy.ID)
-		if candyDone.Status != "completed" || candyDone.Completed != 2 || calls.Load() != 2 {
-			t.Fatalf("real candy runner request accounting failed: %+v / %d", candyDone, calls.Load())
+		if finished := wait(preflight.ID); finished.Completed != 0 {
+			t.Fatal("invalid upstream consumed quota")
+		}
+		if calls.Load() != 0 {
+			t.Fatal("private upstream submitted to Manxue")
+		}
+		preflightResults, err := repo.Results(ctx, 1, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		preflightFound := false
+		for _, result := range preflightResults {
+			if result.RunID == preflight.ID {
+				preflightFound = result.Detail == "manxue_public_https_required" && result.RequestsUsed == 0 && result.Verdict == "error"
+			}
+		}
+		if !preflightFound {
+			t.Fatal("upstream preflight error not persisted")
+		}
+		fixtureRun, err := repo.StartRun(ctx, 1, p, 5, "candy", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, benchmark := range []string{"candy-manxue-v1", "candy-manxue-v1", "candy-manxue-v1", "candy-v1", "candy-variant-v1"} {
+			verdict := "passed"
+			if benchmark != "candy-manxue-v1" {
+				verdict = "incorrect"
+			}
+			x := &service.AccountQualityResult{ConfigVersion: 1, RunID: fixtureRun.ID, GroupID: 1, AccountID: 1, Model: p.Model, Effort: p.Effort, Endpoint: p.Endpoint, Benchmark: benchmark, Verdict: verdict, Evidence: json.RawMessage(`{"provider":"manxue"}`), RequestsUsed: 1}
+			if err := repo.AddResult(ctx, x); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if err := repo.FinishRun(ctx, fixtureRun.ID, "completed"); err != nil {
+			t.Fatal(err)
+		}
+		recent, err := repo.RecentResult(ctx, 1, p, "candy-manxue-v1")
+		if err != nil || recent == nil || !strings.Contains(string(recent.Evidence), "manxue") {
+			t.Fatal("remote evidence lost on reuse", err)
 		}
 		page, err := runner.Page(ctx, 1, 1, 8, "", "", "", "score")
 		if err != nil {
 			t.Fatal(err)
 		}
-		if page.Items[0].CandyStatus != "inconsistent" {
-			t.Fatalf("failed randomized variant was hidden: %+v", page.Items)
+		if page.Items[0].CandyStatus != "passed" || page.Items[0].QualitySamples != 3 || page.Items[0].QualityPassed != 3 {
+			t.Fatalf("legacy local candy affected remote scoring: %+v", page.Items)
 		}
 		trace, err := runner.RunBenchmark(ctx, 1, 1, "modeltrace")
 		if err != nil {
 			t.Fatal(err)
 		}
 		traceDone := wait(trace.ID)
-		if traceDone.Completed != 3 || calls.Load() != 5 {
+		if traceDone.Completed != 3 || calls.Load() != 3 {
 			t.Fatalf("three trace requests not counted: %+v calls=%d", traceDone, calls.Load())
 		}
 		history, err := repo.Results(ctx, 1, 1)
@@ -269,15 +372,15 @@ func TestAccountQualityPostgresContracts(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if wait(contextRun.ID).Completed != 3 || calls.Load() != 8 {
+		if wait(contextRun.ID).Completed != 3 || calls.Load() != 6 {
 			t.Fatal("short/medium/long probes were not executed")
 		}
 		verifiedPage, verifyErr := runner.Page(ctx, 1, 1, 8, "", "", "", "score")
 		if verifyErr != nil {
 			t.Fatal(verifyErr)
 		}
-		if verifiedPage.Items[0].CandyStatus != "inconsistent" {
-			t.Fatal("later successful context checks hid a failed randomized candy verification")
+		if verifiedPage.Items[0].CandyStatus != "passed" {
+			t.Fatal("successful context checks changed remote candy verdict")
 		}
 		block.Store(true)
 		cancelRun, err := runner.RunBenchmark(ctx, 1, 1, "modeltrace")

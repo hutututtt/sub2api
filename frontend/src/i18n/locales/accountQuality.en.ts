@@ -1,10 +1,31 @@
 export default {
+  autoRefresh: 'Automatic refresh',
+  autoRefreshOff: 'Auto refresh off',
+  autoRefreshEvery: 'Refresh every {seconds}s',
+  evidenceSource: 'Reused evidence · source group: {group}',
+  scheduledConsent: 'I authorize scheduled inspections to send account upstream URLs, API keys and model settings to the Manxue API.',
+  consentRequired: 'Confirm credential disclosure to the Manxue API before enabling scheduled inspections.',
+  accountCredentials: 'Automatically uses the upstream URL and API Key saved on the account; no extra setup.',
+  oauthUnsupported: 'OAuth accounts have no directly usable upstream API Key and cannot use Manxue direct checks.',
+  oauthUnsupportedShort: 'Candy checks unavailable for OAuth',
+  manxueScope: 'Candy checks use each API Key account’s saved upstream URL, key and model mapping with Manxue API. No public URL for this deployment is needed.',
+  manxueHTTP: "Manxue API returned HTTP {status}. Check the settings or retry later; 404 means the remote task has expired.",
+  manxueResult: "Verdict source: Manxue API. A completed task only passes when its candy verdict passes.",
+  manxueParameters: "Manxue candy requires Responses, low / medium / high / xhigh / max / ultra effort, and default / priority / ultrafast tier.",
+  manxueNotice:
+    'Candy checks read the account’s saved upstream URL, API Key and mapped model settings and submit them to Manxue, which calls that upstream directly and consumes its quota. No extra URL or generated key is required. Scheduled checks submit the same details; cancellation attempts to cancel the remote task too.',
   toggleScheduling: 'Toggle scheduling for {name}',
   schedulingHint: 'Controls scheduling for this account across all of its groups.',
   capacityHint: 'Account capacity: current concurrency / limit, plus configured window cost, sessions, RPM and quotas. Refresh to update.',
   reusedEvidence:
     'Reused recent matching observation #{id}; it does not add an independent sample.',
   failure: {
+    manxueTransport: "Could not reach Manxue API; the result is unknown.",
+    manxueEvaluation: "Manxue evaluation failed; the result is unknown.",
+    manxueResponse: "Invalid or incomplete Manxue response; no pass was recorded.",
+    manxueParameters: "Manxue candy does not support the selected protocol, effort or tier.",
+    manxueURL: "Manxue requires a public HTTPS upstream URL, not a local address.",
+    manxueAccount: 'This account does not support direct Responses inspection with an upstream API Key.',
     auth: 'Upstream authentication failed; not a wrong capability answer.',
     balance: 'Insufficient upstream balance; not a capability failure.',
     access: 'Upstream access denied; not a capability failure.',
@@ -27,8 +48,7 @@ export default {
   allStatuses: 'All statuses',
   errorStatus: 'Account error',
   runHistory: 'Group inspection runs',
-  budgetForecast:
-    'At the current account count and interval, worst-case coverage requires about {requests} daily requests; the scheduler pauses at the budget limit.',
+  budgetForecast: "All available accounts at this interval need up to about {requests} daily units. Only compatible accounts are tested; inspection pauses at the limit.",
   routeReason: {
     not_automatic: 'Quality weighting is off',
     expired_snapshot:
@@ -39,8 +59,8 @@ export default {
   reason: {
     quality:
       'Requires three recent capability observations; stale evidence is omitted.',
-    ttft: 'Requires 30 first-token samples in the configured scope.',
-    cache: 'Requires 30 business samples; provider-reported input token share.',
+    ttft: 'Requires 30 valid first-token samples in the last 24 hours.',
+    cache: 'Requires 30 business requests in the last 24 hours; cached input tokens / total input tokens.',
     stability: 'Requires 30 observed attempts and matching error-log coverage.'
   },
   mode: {
@@ -60,7 +80,7 @@ export default {
   routingMode: 'Routing mode',
 
   autoHint:
-    'Automatic weighting applies only to the configured model, effort, tier and protocol. Paid inspection has a separate switch. Healthy sessions stay bound; weights move gradually.',
+    'Automatic weighting applies only to the configured model, effort, tier and protocol. Confirmed capability failures immediately reduce the multiplier to 0.1; recovery is gradual. Inspection errors trigger up to three immediate retries.',
   endpoint: 'Request protocol',
   componentWeights: 'Score component weights',
   routingDiagnostics: 'Routing diagnostics',
@@ -70,15 +90,15 @@ export default {
   baseAndEffective: 'Base / effective',
 
   routingHint:
-    'Multipliers combine with the native candidate set, load and admission rules. They are not exact traffic percentages. At least 5% exploration mass is retained; each refresh changes a multiplier by at most 0.15.',
+    'Multipliers combine with native candidates, load and admission rules, rather than representing traffic percentages. Confirmed capability failures immediately reduce the multiplier to 0.1; other adjustments change it by at most 0.15 per minute. At least 5% uniform exploration is retained.',
   recentRoutes: 'Recent matching selections',
   eventRetention:
     'Last 512 events on this node; the most recent 100 are shown. Cleared on restart.',
   noRoutes: 'No matching automatic routing events yet.',
-  confirmedCapabilityFailure: 'Repeated recent capability failures',
+  confirmedCapabilityFailure: 'Recent confirmed capability failure',
   expected: 'Expected answer',
   benchmark: 'Inspection type',
-  benchmarkCandy: 'Candy inspection',
+  benchmarkCandy: "Candy · Manxue API",
   benchmarkTrace: 'ModelTrace',
   benchmarkContext: 'Context check',
   referenceModel: 'Fingerprint reference model',
@@ -102,8 +122,7 @@ export default {
   explanation: 'Score explanation',
 
   title: 'Account quality',
-  subtitle:
-    'Group-based observations · Local candy inspection · Explainable recommendations',
+  subtitle: "Group-based observations · Manxue API candy checks · Explainable recommendations",
   groups: 'Groups',
   memberships: 'Available memberships',
   interval: 'Default inspection interval',
@@ -117,7 +136,7 @@ export default {
   observe: 'Observation mode',
   observeHint:
     'Each group independently selects manual, observation-only or automatic quality routing. Existing list and bulk operations remain available.',
-  window: 'Last 24 hours',
+  window: 'Business usage · Last 24h',
   available: 'available',
   expand: 'Expand accounts',
   collapse: 'Collapse',
@@ -127,7 +146,7 @@ export default {
   state: 'Status',
   candy: 'Candy',
   ttft: 'First token P50 / P95',
-  cache: 'Cache reads',
+  cache: 'Cache reads · 24h',
   score: 'Suggested score',
   weight: 'Suggested share',
   actions: 'Actions',
@@ -151,19 +170,18 @@ export default {
   configure: 'Select a model in inspection settings before testing.',
   model: 'Model',
   modelHint:
-    'Exact upstream model name. Candy inspection currently supports OpenAI Responses accounts.',
+    'Use the request model name; candy checks apply the account model mapping and use its saved upstream URL and API Key. Candy requires Responses.',
   effort: 'Reasoning effort',
   tier: 'Service tier',
   standard: 'Default tier',
   enabled: 'Enable scheduled inspection',
-  budget: 'Daily request limit',
+  budget: "Daily inspection unit limit",
   roundLimit: 'Maximum accounts per round',
   intervalLabel: 'Interval (minutes)',
   save: 'Save settings',
   cancel: 'Cancel',
   saving: 'Saving…',
-  runHint:
-    'Inspection consumes upstream quota. Each account uses up to three requests; daily limits include confirmation retries.',
+  runHint: "Candy errors trigger up to three immediate retries, stopping once a valid verdict is available. Reserve up to four tasks per account; unused units are released when the round completes. ModelTrace and context checks each reserve up to three requests. Optional checks add units. This is not a spending cap.",
   settingsHint:
     'Inspection and automatic routing have separate switches. Choose a supported account protocol; saving applies settings. Scheduled requests remain off until enabled.',
   historyTitle: 'Inspection evidence',
@@ -188,17 +206,24 @@ export default {
   unparseable: 'Unrecognized answer',
   untested: 'Not tested',
   metricHint:
-    'Business observations cover 24 hours; capability observations cover the latest hour. Configured model, effort, tier and protocol are scoped separately. Performance requires 30 samples and capability scoring requires three recent results. Missing evidence is omitted. Suggested shares include neutral shares for untested accounts and are not measured traffic percentages.',
-  sampleHint: 'Business requests / valid first-token samples',
+    'Latency, cache and recorded success rate use business traffic in this group over the last 24 hours. All called models, efforts, tiers and endpoints are included by default; the business model filter is independent of inspection settings. Cache rate is weighted by token counts. Each business score needs 30 corresponding samples. Capability scoring uses the inspection scope and needs three valid independent results in the last hour. Missing data is not scored as zero. List scores use the displayed statistics; automatic routing multipliers still use matching inspection conditions. Suggested shares are not actual traffic percentages.',
+  metricsModel: 'Business statistics model',
+  metricsModelPlaceholder: 'All models · Enter a model to filter',
+  requestsCount: 'Requests',
+  validTTFTCount: 'Valid TTFT',
+  successCount: 'Success',
+  failureCount: 'Failure',
+  inspectionScope: 'Capability check',
+  sampleHint: 'Recorded business usage and valid first-token timings greater than zero in this group over the last 24 hours. All models, reasoning efforts, service tiers and endpoints are included by default.',
+  cacheSampleHint: 'Business requests for this account in the current group over the last 24 hours, across all models by default. Cache rate = total cache-read tokens / total ordinary input, cache-write and cache-read tokens. Weighted by token counts, not by model percentages. Missing input usage stays unknown; scoring requires 30 requests.',
   policy: 'Policy',
   listView: 'Original list',
   groupView: 'Group cards',
-  confirmRun: 'Start local inspection?',
-  confirmHint:
-    'This sends paid requests to the selected upstream accounts. No account credentials are sent to an external testing site.',
+  confirmRun: "Start inspection?",
+  confirmHint: "This sends paid model requests directly to the selected upstream accounts.",
   start: 'Start inspection',
   noGroupTest: 'Assign accounts to a group to configure inspection.',
-  runProgress: 'Recorded requests',
+  runProgress: "Used inspection units",
   timingHint:
     'First-token latency comes from business traffic. Inspection duration is total time, not TTFT.',
   unknown: 'Unknown'

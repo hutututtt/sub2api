@@ -1,6 +1,7 @@
 import { apiClient } from '../client'
-import type { AccountCapacityData } from '@/types'
+import type { AccountCapacityData, AccountStatusData } from '@/types'
 export interface QualityPolicy {
+  candy_consent_version?: string
   enabled: boolean
   interval_minutes: number
   model: string
@@ -30,8 +31,9 @@ export interface QualityGroup {
   policy: QualityPolicy
   next_run_at: string | null
 }
-export interface QualityAccount {
+export interface QualityAccount extends AccountStatusData {
   capacity?: AccountCapacityData | null
+  homepage_url?: string
   id: number
   name: string
   platform: string
@@ -62,7 +64,9 @@ export interface QualityAccount {
   p50_ms: number | null
   p95_ms: number | null
   cache_rate: number | null
+  cache_samples: number
   last_request_at: string | null
+  evidence_ids?: number[]
   candy_status: string
   quality_samples: number
   quality_passed: number
@@ -77,7 +81,9 @@ export interface QualityPage {
   page: number
   page_size: number
   window_hours: number
+  cache_window_hours: number
   model: string
+  inspection_model: string
   mode: string
 }
 export type QualityBenchmark = 'candy' | 'modeltrace' | 'context'
@@ -97,9 +103,16 @@ export interface QualityRun {
   cancel_requested: boolean
 }
 export interface QualityResult {
+  group_id: number
+  config_version: number
   endpoint: string
   requests_used: number
   evidence?: {
+    provider?: string
+    remote_status?: string
+    candy_status?: string
+    request_model?: string
+    upstream_model?: string
     bank_revision?: string
     expected_model?: string
     prompt?: string
@@ -162,10 +175,10 @@ export async function qualityRuns(id: number) {
   return (await apiClient.get<QualityRun[]>(base + '/groups/' + id + '/runs'))
     .data
 }
-export async function qualityResults(id: number, accountId = 0) {
+export async function qualityResults(id: number, accountId = 0, resultIds?: number[]) {
   return (
     await apiClient.get<QualityResult[]>(base + '/groups/' + id + '/results', {
-      params: { account_id: accountId }
+      params: { account_id: accountId, result_ids: resultIds?.length ? resultIds.join(',') : undefined }
     })
   ).data
 }

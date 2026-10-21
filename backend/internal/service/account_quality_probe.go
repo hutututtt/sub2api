@@ -14,10 +14,6 @@ import (
 	"time"
 )
 
-// Candy prompt adapted from haowang02/cpa-plugin-codex-candy-eval (MIT).
-// See docs/ACCOUNT_QUALITY_LICENSES.md. The local final-answer parser is stricter.
-const accountQualityCandyPrompt = "直接回答问题，不允许使用联网搜索、调用命令、历史记忆、代码文件：\r\n\r\n在一个黑色的袋子里放有三种口味的糖果，每种糖果有两种不同的形状（圆形和五角星形，不同的形状靠手感可以分辨）。现已知不同口味的糖和不同形状的数量统计如下表。参赛者需要在活动前决定摸出的糖果数目，那么，最少取出多少个糖果才能保证手中同时拥有不同形状的苹果味和桃子味的糖？（同时手中有圆形苹果味匹配五角星桃子味糖果，或者有圆形桃子味匹配五角星苹果味糖果都满足要求）\r\n\r\n        苹果味  桃子味  西瓜味\r\n圆形       7      9      8\r\n五角星形   7      6      4\r\n"
-
 type qualityProbeContextKey struct{}
 type qualityProbeSpec struct{ Prompt, Effort, Tier, Endpoint string }
 

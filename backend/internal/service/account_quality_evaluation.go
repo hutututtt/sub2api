@@ -30,7 +30,7 @@ func qualityRoundRequestLimit(p AccountQualityPolicy, benchmark string) int {
 	case "context":
 		return 3
 	}
-	n := 3
+	n := 1 + accountQualityProbeRetries
 	if p.TraceOnAnomaly {
 		n += 3
 	}
@@ -58,15 +58,20 @@ func (s *AccountQualityService) probe(ctx context.Context, run *AccountQualityRu
 			slog.Error("account quality worker panic", "run_id", run.ID, "account_id", id)
 		}
 	}()
-	switch run.Benchmark {
-	case "modeltrace":
-		s.probeTrace(ctx, run, p, id)
-		return
-	case "context":
-		s.probeContext(ctx, run, p, id)
+	version, err := s.repo.ConfigVersion(ctx, id)
+	if err != nil || version <= 0 {
+		s.persistenceFailures.Store(run.ID, true)
 		return
 	}
-	s.probeCandy(ctx, run, p, id)
+	switch run.Benchmark {
+	case "modeltrace":
+		s.probeTrace(ctx, run, p, id, version)
+		return
+	case "context":
+		s.probeContext(ctx, run, p, id, version)
+		return
+	}
+	s.probeCandy(ctx, run, p, id, version)
 	if !p.TraceOnAnomaly && !p.ContextCheck {
 		return
 	}
@@ -91,13 +96,13 @@ func (s *AccountQualityService) probe(ctx context.Context, run *AccountQualityRu
 		return
 	}
 	if anomaly && p.TraceOnAnomaly {
-		s.probeTrace(ctx, run, p, id)
+		s.probeTrace(ctx, run, p, id, version)
 	}
 	if p.ContextCheck {
-		s.probeContext(ctx, run, p, id)
+		s.probeContext(ctx, run, p, id, version)
 	}
 }
-func (s *AccountQualityService) probeTrace(ctx context.Context, run *AccountQualityRun, p AccountQualityPolicy, id int64) {
+func (s *AccountQualityService) probeTrace(ctx context.Context, run *AccountQualityRun, p AccountQualityPolicy, id, version int64) {
 	if !qualitytrace.Supported(p.ReferenceModel) {
 		return
 	}
@@ -134,7 +139,7 @@ func (s *AccountQualityService) probeTrace(ctx context.Context, run *AccountQual
 	for _, o := range outputs {
 		answers = append(answers, o.Text)
 	}
-	result := &AccountQualityResult{RunID: run.ID, GroupID: run.GroupID, AccountID: id, Model: p.Model, Effort: p.Effort, ServiceTier: p.ServiceTier, Benchmark: "modeltrace-v1", Verdict: verdict, Answer: strings.Join(answers, "\n\n"), Detail: reason, Evidence: raw, DurationMs: time.Since(start).Milliseconds(), Endpoint: p.Endpoint, RequestsUsed: calls}
+	result := &AccountQualityResult{ConfigVersion: version, RunID: run.ID, GroupID: run.GroupID, AccountID: id, Model: p.Model, Effort: p.Effort, ServiceTier: p.ServiceTier, Benchmark: "modeltrace-v1", Verdict: verdict, Answer: strings.Join(answers, "\n\n"), Detail: reason, Evidence: raw, DurationMs: time.Since(start).Milliseconds(), Endpoint: p.Endpoint, RequestsUsed: calls}
 	result.Evidence = qualityResponseEvidence(result.Evidence, result.Answer)
 	if err = s.repo.AddResult(ctx, result); err != nil {
 		s.persistenceFailures.Store(run.ID, true)
@@ -168,7 +173,7 @@ func qualityRetrievalChallenge(chars int) (prompt, expected string, err error) {
 	prompt = "从下列记录中准确读取指定编号的值，不调用工具，不使用记录里的其他值。\n" + records.String() + "\n只查询 record_" + key + " 的值，仅输出 <answer>九位整数</answer>。"
 	return prompt, answer, nil
 }
-func (s *AccountQualityService) probeContext(ctx context.Context, run *AccountQualityRun, p AccountQualityPolicy, id int64) {
+func (s *AccountQualityService) probeContext(ctx context.Context, run *AccountQualityRun, p AccountQualityPolicy, id, version int64) {
 	for _, spec := range []struct {
 		name  string
 		chars int
@@ -185,46 +190,12 @@ func (s *AccountQualityService) probeContext(ctx context.Context, run *AccountQu
 		if detail == "" {
 			verdict = judgeAccountQualityAnswer(answer, expected)
 		}
-		result := &AccountQualityResult{RunID: run.ID, GroupID: run.GroupID, AccountID: id, Model: p.Model, Effort: p.Effort, ServiceTier: p.ServiceTier, Endpoint: p.Endpoint, RequestsUsed: 1, Benchmark: spec.name, Verdict: verdict, Answer: answer, Detail: detail, DurationMs: ms, Evidence: qualityChallengeEvidence(prompt, expected, map[string]any{"synthetic_context": true})}
+		result := &AccountQualityResult{ConfigVersion: version, RunID: run.ID, GroupID: run.GroupID, AccountID: id, Model: p.Model, Effort: p.Effort, ServiceTier: p.ServiceTier, Endpoint: p.Endpoint, RequestsUsed: 1, Benchmark: spec.name, Verdict: verdict, Answer: answer, Detail: detail, DurationMs: ms, Evidence: qualityChallengeEvidence(prompt, expected, map[string]any{"synthetic_context": true})}
 		result.Evidence = qualityResponseEvidence(result.Evidence, result.Answer)
-		if err = s.repo.AddResult(ctx, result); err != nil {
-			s.persistenceFailures.Store(run.ID, true)
-			slog.Error("context evidence not persisted", "error", err)
+		if !s.saveProbeResult(ctx, result, p) {
 			return
 		}
 	}
-}
-
-type qualityCandyTable struct{ AppleRound, PeachRound, OtherRound, AppleStar, PeachStar, OtherStar int }
-
-// A failed draw is possible iff either selected shape contains only unrelated
-// flavor, or both shapes can contain the same sole target flavor. Enumerating
-// all shape quotas gives the exact minimum for this explicitly stated task.
-func qualityCandyMinimum(t qualityCandyTable) int {
-	best := t.AppleRound + t.PeachRound + t.OtherRound + t.AppleStar + t.PeachStar + t.OtherStar
-	for round := 0; round <= t.AppleRound+t.PeachRound+t.OtherRound; round++ {
-		for star := 0; star <= t.AppleStar+t.PeachStar+t.OtherStar; star++ {
-			guaranteed := round > t.OtherRound && star > t.OtherStar && (round > t.AppleRound+t.OtherRound || star > t.AppleStar+t.OtherStar) && (round > t.PeachRound+t.OtherRound || star > t.PeachStar+t.OtherStar)
-			if guaranteed && round+star < best {
-				best = round + star
-			}
-		}
-	}
-	return best
-}
-func qualityCandyVariant() (prompt, expected string, err error) {
-	counts := [6]int{}
-	for i := range counts {
-		n, e := rand.Int(rand.Reader, big.NewInt(12))
-		if e != nil {
-			return "", "", e
-		}
-		counts[i] = int(n.Int64()) + 3
-	}
-	t := qualityCandyTable{counts[0], counts[1], counts[2], counts[3], counts[4], counts[5]}
-	answer := qualityCandyMinimum(t)
-	prompt = fmt.Sprintf("袋中三种口味的糖果，各有圆形和星形，数量如下：\n             苹果 桃子 西瓜\n圆形          %d   %d   %d\n星形          %d   %d   %d\n你能凭触感分辨形状，但不能分辨口味。允许预先选定分别摸出多少颗圆形和多少颗星形，再在各自形状内盲取。问总共最少取出多少颗，才能保证至少有一对苹果和桃子口味的糖果且两颗形状不同？不使用工具。仅输出 <answer>整数</answer>。", t.AppleRound, t.PeachRound, t.OtherRound, t.AppleStar, t.PeachStar, t.OtherStar)
-	return prompt, fmt.Sprint(answer), nil
 }
 
 func qualityResponseEvidence(raw json.RawMessage, answer string) json.RawMessage {

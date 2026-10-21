@@ -163,6 +163,7 @@ export default {
 
   // Navigation
   nav: {
+    canvas: 'AI 画布',
     dashboard: '仪表盘',
     announcements: '公告',
     apiKeys: 'API 密钥',
@@ -171,6 +172,7 @@ export default {
     redeem: '兑换',
     affiliate: '邀请返利',
     affiliateManagement: '邀请返利',
+    promotions: '推广统计',
     affiliateInviteRecords: '邀请记录',
     affiliateRebateRecords: '返利记录',
     affiliateTransferRecords: '提取记录',

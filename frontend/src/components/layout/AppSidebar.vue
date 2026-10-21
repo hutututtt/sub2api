@@ -221,6 +221,10 @@ interface NavItem {
   featureFlag?: () => boolean | undefined
 }
 
+const props = defineProps<{ compact?: boolean }>()
+const emit = defineEmits<{ 'collapse-change': [collapsed: boolean] }>()
+const workspaceCollapsed = ref(true)
+
 // applyFeatureFlags 递归过滤掉 featureFlag() === false 的节点（含子节点）。
 // 使用 `!== false` 宽容语义：undefined（设置未加载）或 true 都视为显示。
 function applyFeatureFlags(items: NavItem[]): NavItem[] {
@@ -246,7 +250,7 @@ const onboardingStore = useOnboardingStore()
 const adminSettingsStore = useAdminSettingsStore()
 const { canUseBatchImage, refreshBatchImageAccess } = useBatchImageAccess()
 
-const sidebarCollapsed = computed(() => appStore.sidebarCollapsed)
+const sidebarCollapsed = computed(() => props.compact ? workspaceCollapsed.value : appStore.sidebarCollapsed)
 const mobileOpen = computed(() => appStore.mobileOpen)
 const isAdmin = computed(() => authStore.isAdmin)
 const sidebarNavRef = ref<HTMLElement | null>(null)
@@ -724,6 +728,7 @@ function buildSelfNavItems(withDashboard: boolean): NavItem[] {
   }
   items.push(
     { path: '/keys', label: t('nav.apiKeys'), icon: KeyIcon },
+    { path: '/canvas', label: t('nav.canvas'), icon: BatchImageIcon },
     { path: '/batch-image', label: t('nav.batchImage'), icon: BatchImageIcon, hideInSimpleMode: true, featureFlag: flagBatchImageAccess },
     { path: '/usage', label: t('nav.usage'), icon: ChartIcon, hideInSimpleMode: true },
     { path: '/available-channels', label: t('nav.availableChannels'), icon: ChannelIcon, hideInSimpleMode: true, featureFlag: flagAvailableChannels },
@@ -809,6 +814,7 @@ const adminNavItems = computed((): NavItem[] => {
     },
     { path: '/admin/redeem', label: t('nav.redeemCodes'), icon: TicketIcon, hideInSimpleMode: true },
     { path: '/admin/promo-codes', label: t('nav.promoCodes'), icon: GiftIcon, hideInSimpleMode: true },
+    { path: '/admin/promotions', label: t('nav.promotions'), icon: ChartIcon, hideInSimpleMode: true },
     {
       path: '/admin/affiliates',
       label: t('nav.affiliateManagement'),
@@ -860,7 +866,10 @@ const adminNavItems = computed((): NavItem[] => {
 })
 
 function toggleSidebar() {
-  appStore.toggleSidebar()
+  if (props.compact) {
+    workspaceCollapsed.value = !workspaceCollapsed.value
+    emit('collapse-change', workspaceCollapsed.value)
+  } else appStore.toggleSidebar()
 }
 
 function toggleTheme() {

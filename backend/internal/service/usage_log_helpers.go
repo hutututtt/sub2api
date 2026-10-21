@@ -1,6 +1,9 @@
 package service
 
-import "strings"
+import (
+	"context"
+	"strings"
+)
 
 func optionalTrimmedStringPtr(raw string) *string {
 	trimmed := strings.TrimSpace(raw)
@@ -41,4 +44,12 @@ func optionalInt64Ptr(v int64) *int64 {
 		return nil
 	}
 	return &v
+}
+
+// An explicitly captured absent effort means unspecified, not the model default.
+func requestedQualityReasoningEffort(ctx context.Context, requested, forwarded *string) *string {
+	if scope, ok := ctx.Value(accountQualityScopeKey{}).(AccountQualityRequestScope); ok {
+		return optionalTrimmedStringPtr(scope.Effort)
+	}
+	return coalesceRequestedReasoningEffort(requested, forwarded)
 }

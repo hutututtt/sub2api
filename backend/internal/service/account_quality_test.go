@@ -54,12 +54,41 @@ func TestAccountQualityStaleAndInsufficientEvidence(t *testing.T) {
 		t.Fatal("stale candy and fewer than 30 timing samples must not score")
 	}
 }
+func TestAccountQualityCacheScoreUsesRecentSamples(t *testing.T) {
+	cache := 80.0
+	p := DefaultAccountQualityPolicy()
+	p.ScoreWeights = AccountQualityScoreWeights{Cache: 100}
+	for _, tc := range []struct {
+		name    string
+		samples int64
+		rate    *float64
+		ready   bool
+	}{
+		{"no recent requests", 0, nil, false},
+		{"insufficient recent requests", 29, &cache, false},
+		{"enough recent requests", 30, &cache, true},
+		{"missing input usage", 30, nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows := []AccountQualityRow{{Requests: 200, CacheSamples: tc.samples, CacheRate: tc.rate}}
+			ScoreAccountQualityWithPolicy(rows, p)
+			component := rows[0].Components[2]
+			if component.Samples != tc.samples || (component.Score != nil) != tc.ready || (rows[0].Score != nil) != tc.ready {
+				t.Fatalf("cache scoring used the wrong window: %+v", rows[0])
+			}
+			if tc.ready && (*rows[0].Score != cache || component.EffectiveWeight != 100) {
+				t.Fatalf("unexpected recent cache score: %+v", rows[0])
+			}
+		})
+	}
+}
 func TestAccountQualityPolicyValidation(t *testing.T) {
 	p := DefaultAccountQualityPolicy()
 	if err := p.Validate(); err != nil {
 		t.Fatal(err)
 	}
 	p.Enabled = true
+	p.CandyConsentVersion = AccountQualityCandyConsentVersion
 	if p.Validate() == nil {
 		t.Fatal("enabled inspection requires explicit model")
 	}
@@ -84,12 +113,12 @@ func (r *qualityBudgetRepo) Policy(context.Context, int64) (AccountQualityPolicy
 	p.Model = "test-model"
 	return p, nil
 }
-func (r *qualityBudgetRepo) Rows(context.Context, int64, AccountQualityPolicy) ([]AccountQualityRow, error) {
-	return []AccountQualityRow{{ID: 7, Platform: "openai", Status: "active", Schedulable: true}}, nil
+func (r *qualityBudgetRepo) Rows(context.Context, int64, AccountQualityPolicy, ...AccountQualityObservationScope) ([]AccountQualityRow, error) {
+	return []AccountQualityRow{{ID: 7, Platform: "openai", Type: AccountTypeAPIKey, Status: "active", Schedulable: true}}, nil
 }
 func (r *qualityBudgetRepo) UsedToday(context.Context, int64) (int, error) { return r.used, nil }
 func TestAccountQualityBudgetFailsBeforeRequest(t *testing.T) {
-	svc := NewAccountQualityService(&qualityBudgetRepo{used: 199}, nil)
+	svc := NewAccountQualityService(&qualityBudgetRepo{used: 200}, nil)
 	_, err := svc.Run(context.Background(), 1, 7)
 	if err == nil || !strings.Contains(err.Error(), "budget") {
 		t.Fatalf("expected budget rejection before any upstream call: %v", err)
@@ -119,13 +148,21 @@ func (f *qualityFakeProbe) RunQualityProbe(_ context.Context, id int64, _ Accoun
 	f.ids = append(f.ids, id)
 	return f.answer, f.detail, 1
 }
-func TestAccountQualityWrongAnswersRepeatSameAccount(t *testing.T) {
+func (f *qualityFakeProbe) RunCandyProbe(_ context.Context, id int64, _ AccountQualityPolicy, _ string) AccountQualityResult {
+	f.ids = append(f.ids, id)
+	verdict := "incorrect"
+	if f.detail != "" {
+		verdict = "error"
+	}
+	return AccountQualityResult{Verdict: verdict, Answer: f.answer, Detail: f.detail, RequestsUsed: 1, Evidence: []byte(`{"provider":"manxue"}`)}
+}
+func TestAccountQualityRemoteVerdictHasNoLocalRetries(t *testing.T) {
 	repo := &qualityCaptureRepo{}
 	probe := &qualityFakeProbe{answer: "<answer>20</answer>"}
 	svc := &AccountQualityService{repo: repo, tester: probe}
 	svc.probe(context.Background(), &AccountQualityRun{ID: 1, GroupID: 3}, DefaultAccountQualityPolicy(), 7)
-	if len(probe.ids) != 3 {
-		t.Fatalf("expected initial plus 2 confirmation attempts, got %d", len(probe.ids))
+	if len(probe.ids) != 1 {
+		t.Fatalf("expected one remote task, got %d", len(probe.ids))
 	}
 	for _, id := range probe.ids {
 		if id != 7 {
@@ -143,8 +180,13 @@ func TestAccountQualityTransportFailureIsNotWrongAnswer(t *testing.T) {
 	probe := &qualityFakeProbe{detail: "upstream_or_transport_error"}
 	svc := &AccountQualityService{repo: repo, tester: probe}
 	svc.probe(context.Background(), &AccountQualityRun{ID: 1, GroupID: 3}, DefaultAccountQualityPolicy(), 7)
-	if len(repo.results) != 1 || repo.results[0].Verdict != "error" {
-		t.Fatal("transport failure must be a single error, not an intelligence failure")
+	if len(repo.results) != 4 || len(probe.ids) != 4 {
+		t.Fatal("transport failure must retry three times")
+	}
+	for _, result := range repo.results {
+		if result.Verdict != "error" {
+			t.Fatal("transport failure must not become an intelligence failure")
+		}
 	}
 }
 func TestAccountQualityPayloadIsolation(t *testing.T) {
@@ -225,7 +267,7 @@ func TestAccountQualityInconsistentEvidenceLowersRecommendation(t *testing.T) {
 	rows := []AccountQualityRow{{CandyStatus: "inconsistent", QualitySamples: 3, QualityPassed: 3, LastTestAt: &now}}
 	ScoreAccountQuality(rows)
 	if rows[0].Score == nil || *rows[0].Score != 0 {
-		t.Fatal("fixed candy success must not override a failed randomized verification")
+		t.Fatal("candy success must not override a failed context verification")
 	}
 }
 
@@ -262,66 +304,16 @@ func TestAccountQualityContextChallengeAlwaysContainsUniqueExpectedRecord(t *tes
 }
 func TestAccountQualityRoundBudgetIncludesAllEnabledReviews(t *testing.T) {
 	p := DefaultAccountQualityPolicy()
-	if qualityRoundRequestLimit(p, "candy") != 3 {
+	if qualityRoundRequestLimit(p, "candy") != 4 {
 		t.Fatal("base budget")
 	}
 	p.TraceOnAnomaly = true
 	p.ContextCheck = true
-	if qualityRoundRequestLimit(p, "candy") != 9 || qualityRoundRequestLimit(p, "modeltrace") != 3 || qualityRoundRequestLimit(p, "context") != 3 {
+	if qualityRoundRequestLimit(p, "candy") != 10 || qualityRoundRequestLimit(p, "modeltrace") != 3 || qualityRoundRequestLimit(p, "context") != 3 {
 		t.Fatal("review requests must be reserved before calls")
 	}
 }
 
-func TestAccountQualityCandyOracleMatchesExhaustiveFlavorDraws(t *testing.T) {
-	original := qualityCandyTable{7, 9, 8, 7, 6, 4}
-	if qualityCandyMinimum(original) != 21 {
-		t.Fatal("reference candy oracle mismatch")
-	}
-	for _, table := range []qualityCandyTable{{1, 1, 1, 1, 1, 1}, {1, 2, 1, 3, 1, 2}, {2, 3, 2, 1, 2, 1}, {3, 1, 2, 2, 2, 3}} {
-		oracle := 100000
-		for r := 0; r <= table.AppleRound+table.PeachRound+table.OtherRound; r++ {
-			for s := 0; s <= table.AppleStar+table.PeachStar+table.OtherStar; s++ {
-				bad := false
-				for ar := 0; ar <= table.AppleRound; ar++ {
-					for pr := 0; pr <= table.PeachRound; pr++ {
-						wr := r - ar - pr
-						if wr < 0 || wr > table.OtherRound {
-							continue
-						}
-						for as := 0; as <= table.AppleStar; as++ {
-							for ps := 0; ps <= table.PeachStar; ps++ {
-								ws := s - as - ps
-								if ws < 0 || ws > table.OtherStar {
-									continue
-								}
-								if !(ar > 0 && ps > 0 || pr > 0 && as > 0) {
-									bad = true
-								}
-							}
-						}
-					}
-				}
-				if !bad && r+s < oracle {
-					oracle = r + s
-				}
-			}
-		}
-		if got := qualityCandyMinimum(table); got != oracle {
-			t.Fatalf("generated candy answer wrong for %+v: %d vs %d", table, got, oracle)
-		}
-	}
-	seen := map[string]bool{}
-	for i := 0; i < 20; i++ {
-		prompt, answer, err := qualityCandyVariant()
-		if err != nil || prompt == "" || answer == "" {
-			t.Fatal("challenge generation failed", err)
-		}
-		seen[answer] = true
-	}
-	if len(seen) < 2 {
-		t.Fatal("private candy variant answers must vary")
-	}
-}
 func TestAccountQualityBudgetDayUsesBeijingBoundary(t *testing.T) {
 	before := time.Date(2026, 10, 18, 15, 59, 59, 0, time.UTC)
 	next := qualityNextBudgetDay(before)
@@ -357,7 +349,7 @@ func (r *qualityScheduledRepo) Groups(context.Context) ([]AccountQualityGroup, e
 func (r *qualityScheduledRepo) Policy(context.Context, int64) (AccountQualityPolicy, error) {
 	return r.policy, nil
 }
-func (r *qualityScheduledRepo) Rows(context.Context, int64, AccountQualityPolicy) ([]AccountQualityRow, error) {
+func (r *qualityScheduledRepo) Rows(context.Context, int64, AccountQualityPolicy, ...AccountQualityObservationScope) ([]AccountQualityRow, error) {
 	return []AccountQualityRow{{ID: 7, Platform: PlatformOpenAI, Type: AccountTypeAPIKey, Status: "active", Schedulable: true}}, nil
 }
 func (r *qualityScheduledRepo) UsedToday(context.Context, int64) (int, error) { return r.used, nil }
@@ -377,6 +369,7 @@ func (r *qualityScheduledRepo) FinishRun(_ context.Context, _ int64, status stri
 func TestAccountQualityScheduledRoundUsesFifteenMinutesAndDoesNotOverlap(t *testing.T) {
 	p := DefaultAccountQualityPolicy()
 	p.Enabled = true
+	p.CandyConsentVersion = AccountQualityCandyConsentVersion
 	p.Model = "fixture-model"
 	due := time.Now().Add(-time.Minute)
 	repo := &qualityScheduledRepo{policy: p, groups: []AccountQualityGroup{{ID: 1, Policy: p, NextRunAt: &due}, {ID: 2, Policy: p, NextRunAt: &due}}, finished: make(chan string, 1)}
@@ -392,19 +385,20 @@ func TestAccountQualityScheduledRoundUsesFifteenMinutesAndDoesNotOverlap(t *test
 	case <-time.After(time.Second):
 		t.Fatal("scheduled round did not execute")
 	}
-	if !repo.scheduled || repo.reserved != 3 {
+	if !repo.scheduled || repo.reserved != 4 {
 		t.Fatal("scheduled request reservation was not applied")
 	}
 	if delta := time.Until(repo.next); delta < 14*time.Minute || delta > 16*time.Minute {
 		t.Fatal("next inspection is not fifteen minutes away", delta)
 	}
-	if len(repo.results) != 3 {
-		t.Fatal("confirmation test count incorrect")
+	if len(repo.results) != 1 {
+		t.Fatal("remote task count incorrect")
 	}
 }
 func TestAccountQualityExhaustedScheduledBudgetWaitsUntilNextBeijingDay(t *testing.T) {
 	p := DefaultAccountQualityPolicy()
 	p.Enabled = true
+	p.CandyConsentVersion = AccountQualityCandyConsentVersion
 	p.Model = "fixture-model"
 	due := time.Now().Add(-time.Minute)
 	repo := &qualityScheduledRepo{policy: p, used: 200, groups: []AccountQualityGroup{{ID: 1, Policy: p, NextRunAt: &due}}, finished: make(chan string, 1)}
@@ -428,3 +422,5 @@ func TestAccountQualityTechnicalFailureCategories(t *testing.T) {
 		t.Fatal("cancellation was not distinguished")
 	}
 }
+
+func (r *qualityCaptureRepo) ConfigVersion(context.Context, int64) (int64, error) { return 1, nil }

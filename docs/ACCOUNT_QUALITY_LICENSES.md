@@ -1,7 +1,8 @@
 # Account quality attribution
 
-Candy problem text is adapted from haowang02/cpa-plugin-codex-candy-eval, internal/plugin/candy.go.
-The local runner and strict final-answer parsing are new; this is not the Manxue API or its evaluator.
+Candy evaluation now calls the external Manxue API (https://manxue.ai/api). Local candy prompt text, judging and randomized variants have been removed. Legacy local results remain in history. This repository reads the selected API Key account’s saved upstream URL, API Key and model mapping and submits them to Manxue for direct Responses checks. No account relay or generated inspection keys are used.
+
+The following MIT notice remains applicable to the ModelTrace algorithm port from haowang02/cpa-plugin-codex-candy-eval.
 
 MIT License
 

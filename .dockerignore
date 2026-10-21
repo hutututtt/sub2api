@@ -61,6 +61,9 @@ config.local.yaml
 logs/
 
 # Temporary files
+.dev/
+.artifacts/
+frontend/public/canvas-app/
 tmp/
 temp/
 *.tmp

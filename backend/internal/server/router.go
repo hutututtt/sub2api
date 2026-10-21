@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"log"
+	"net/http"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -60,6 +62,17 @@ func SetupRouter(
 	// 将客户端 IP + UA 注入 request context，供 token 签发/会话绑定/审计日志统一读取。
 	// 解析模式按请求快照：兼容开关开启时信任原始转发头，关闭时使用 server.trusted_proxies。
 	r.Use(middleware2.SessionBindingContext(cfg))
+	r.Use(func(c *gin.Context) {
+		path := c.Request.URL.Path
+		isRegistration := c.Request.Method == http.MethodPost && (path == "/api/v1/auth/register" || strings.HasSuffix(path, "/create-account") || strings.HasSuffix(path, "/complete-registration"))
+		isOAuthCallback := strings.Contains(path, "/callback") && strings.HasPrefix(path, "/api/v1/auth/")
+		if isRegistration || isOAuthCallback {
+			if cookie, err := c.Cookie("promotion_visitor"); err == nil {
+				c.Request = c.Request.WithContext(service.WithPromotionVisitor(c.Request.Context(), cookie))
+			}
+		}
+		c.Next()
+	})
 	r.Use(middleware2.Logger())
 	r.Use(middleware2.CORS(cfg.CORS))
 	r.Use(middleware2.SecurityHeaders(cfg.Security.CSP, func() []string {
@@ -115,6 +128,9 @@ func registerRoutes(
 ) {
 	// 通用路由（健康检查、状态等）
 	routes.RegisterCommonRoutes(r)
+	if h.Promotion != nil {
+		r.GET("/p/:code", h.Promotion.Redirect)
+	}
 
 	// API v1
 	v1 := r.Group("/api/v1")
@@ -125,6 +141,9 @@ func registerRoutes(
 
 	// 注册各模块路由
 	routes.RegisterAuthRoutes(v1, h, jwtAuth, auditLog, redisClient, settingService, panelRateLimiter)
+	if h.Promotion != nil {
+		v1.POST("/promotions/visit", panelRateLimiter.PublicIP(), h.Promotion.TrackVisit)
+	}
 	routes.RegisterUserRoutes(v1, h, jwtAuth, auditLog, settingService, panelRateLimiter)
 	routes.RegisterModelPlazaRoutes(v1, h, optionalJWTAuth, settingService, panelRateLimiter)
 	routes.RegisterAdminRoutes(v1, h, adminAuth, auditLog, stepUpAuth, settingService, panelRateLimiter)

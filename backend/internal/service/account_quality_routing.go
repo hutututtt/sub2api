@@ -19,11 +19,32 @@ type AccountQualityRequestScope struct {
 	Endpoint    string `json:"endpoint"`
 }
 type accountQualityScopeKey struct{}
+type accountQualityOriginalScopeKey struct{}
+
+// Copy only non-secret quality conditions into the detached usage worker.
+func CopyAccountQualityRequestScope(dst, src context.Context) context.Context {
+	if src != nil {
+		if scope, ok := src.Value(accountQualityScopeKey{}).(AccountQualityRequestScope); ok {
+			return WithAccountQualityRequestScope(dst, scope)
+		}
+	}
+	return dst
+}
+
+// Capture the original request before any group policy rewrites. Later attempts
+// retain this identity so success, failure and routing use the same scope.
+func WithAccountQualityOriginalBodyScope(ctx context.Context, model string, body []byte, path string) context.Context {
+	ctx = WithAccountQualityBodyScope(ctx, model, body, path)
+	return context.WithValue(ctx, accountQualityOriginalScopeKey{}, true)
+}
 
 func WithAccountQualityRequestScope(ctx context.Context, s AccountQualityRequestScope) context.Context {
 	return context.WithValue(ctx, accountQualityScopeKey{}, s)
 }
 func WithAccountQualityBodyScope(ctx context.Context, model string, body []byte, path string) context.Context {
+	if captured, _ := ctx.Value(accountQualityOriginalScopeKey{}).(bool); captured {
+		return ctx
+	}
 	view := openAIRequestPayloadView(body)
 	effort := ""
 	for _, field := range []string{"reasoning.effort", "reasoning_effort", "output_config.effort", "generationConfig.thinkingConfig.thinkingLevel"} {
@@ -59,10 +80,25 @@ func WithAccountQualityBodyScope(ctx context.Context, model string, body []byte,
 }
 
 type accountQualityRoutingEntry struct {
-	Multiplier   float64  `json:"multiplier"`
-	ConfirmedBad bool     `json:"confirmed_bad"`
-	Score        *float64 `json:"score"`
+	ConfigVersion int64    `json:"-"`
+	Multiplier    float64  `json:"multiplier"`
+	ConfirmedBad  bool     `json:"confirmed_bad"`
+	Score         *float64 `json:"score"`
 }
+
+const accountQualityMinMultiplier = .1
+
+func accountQualityConfirmedBad(r AccountQualityRow, now time.Time) bool {
+	if r.CapabilityFailed {
+		return true
+	}
+	if r.LastTestAt == nil || r.LastTestAt.After(now) || now.Sub(*r.LastTestAt) >= time.Hour {
+		return false
+	}
+	return r.CandyStatus == "incorrect" || r.CandyStatus == "inconsistent" ||
+		(r.QualitySamples >= 3 && float64(r.QualityPassed)/float64(r.QualitySamples) <= .25)
+}
+
 type accountQualityRoutingGroup struct {
 	Policy  AccountQualityPolicy
 	Weights map[int64]accountQualityRoutingEntry
@@ -107,20 +143,23 @@ func (s *AccountQualityService) refreshRouting(ctx context.Context) error {
 			if r.Score != nil {
 				target = .25 + 1.75*math.Pow(*r.Score/100, 2)
 			}
-			bad := p.ScoreWeights.Quality > 0 && r.QualitySamples >= 3 && r.LastTestAt != nil && time.Since(*r.LastTestAt) < time.Hour && (r.CandyStatus == "inconsistent" || float64(r.QualityPassed)/float64(r.QualitySamples) <= .25)
+			bad := accountQualityConfirmedBad(r, now)
 			if bad {
-				target = .1
+				target = accountQualityMinMultiplier
 			}
 			prior := old[r.ID]
-			if prior.Multiplier <= 0 {
+			if prior.Multiplier <= 0 || prior.ConfigVersion != r.ConfigVersion {
 				prior.Multiplier = 1
 				prior.UpdatedAt = now.Add(-time.Minute)
 			}
 			elapsed := math.Max(0, now.Sub(prior.UpdatedAt).Seconds())
 			step := .15 * math.Min(1, elapsed/60)
-			m := math.Max(.1, math.Min(2, prior.Multiplier+math.Max(-step, math.Min(step, target-prior.Multiplier))))
-			weights[r.ID] = AccountQualityStoredWeight{Multiplier: m, UpdatedAt: now}
-			entries[r.ID] = accountQualityRoutingEntry{Multiplier: m, ConfirmedBad: bad, Score: r.Score}
+			m := math.Max(accountQualityMinMultiplier, math.Min(2, prior.Multiplier+math.Max(-step, math.Min(step, target-prior.Multiplier))))
+			if bad {
+				m = accountQualityMinMultiplier
+			}
+			weights[r.ID] = AccountQualityStoredWeight{Multiplier: m, UpdatedAt: now, ConfigVersion: r.ConfigVersion}
+			entries[r.ID] = accountQualityRoutingEntry{Multiplier: m, ConfirmedBad: bad, Score: r.Score, ConfigVersion: r.ConfigVersion}
 		}
 		if err = s.repo.SaveWeights(ctx, g.ID, p.ScopeKey(), weights); err != nil {
 			return err
@@ -172,18 +211,23 @@ func (s *AccountQualityService) matchRouting(ctx context.Context, g *int64, mode
 	}
 	return group, p.Mode == "auto" && p.Model == scope.Model && p.Effort == effort && p.ServiceTier == scope.ServiceTier && p.Endpoint == scope.Endpoint
 }
-func (s *AccountQualityService) effectiveMultiplier(_ context.Context, g int64, p AccountQualityPolicy, id int64) (float64, bool) {
+func (s *AccountQualityService) effectiveMultiplier(_ context.Context, g int64, p AccountQualityPolicy, id, version int64) (float64, bool) {
 	ctx := WithAccountQualityRequestScope(context.Background(), AccountQualityRequestScope{Model: p.Model, Effort: p.Effort, ServiceTier: p.ServiceTier, Endpoint: p.Endpoint})
 	group, ok := s.matchRouting(ctx, &g, p.Model)
 	if !ok {
 		return 0, false
 	}
 	w, ok := group.Weights[id]
-	return w.Multiplier, ok
+	return w.Multiplier, ok && version > 0 && w.ConfigVersion == version
 }
 func (s *AccountQualityService) shouldEscapeSticky(ctx context.Context, g *int64, model string, id int64) bool {
 	group, ok := s.matchRouting(ctx, g, model)
-	return ok && group.Weights[id].ConfirmedBad
+	w := group.Weights[id]
+	if !ok || !w.ConfirmedBad || w.ConfigVersion <= 0 {
+		return false
+	}
+	version, err := s.repo.ConfigVersion(ctx, id)
+	return err == nil && version == w.ConfigVersion
 }
 
 // Weighted permutations retain at least 5% uniform exploration mass.
@@ -228,7 +272,7 @@ func (s *AccountQualityService) orderAccounts(ctx context.Context, g *int64, mod
 		chunk := append([]*Account(nil), out[begin:end]...)
 		weights := make([]float64, len(chunk))
 		for i, a := range chunk {
-			weights[i] = group.Weights[a.ID].Multiplier
+			weights[i] = qualityAccountMultiplier(group.Weights[a.ID], a)
 			if weights[i] <= 0 {
 				weights[i] = 1
 			}
@@ -266,18 +310,18 @@ type AccountQualityRoutingEvent struct {
 	CreatedAt  time.Time                  `json:"created_at"`
 }
 
-func (s *AccountQualityService) recordRouting(ctx context.Context, g *int64, model string, id int64, reason string) {
+func (s *AccountQualityService) recordRouting(ctx context.Context, g *int64, model string, account *Account, reason string) {
 	group, ok := s.matchRouting(ctx, g, model)
 	if !ok {
 		return
 	}
 	scope, _ := ctx.Value(accountQualityScopeKey{}).(AccountQualityRequestScope)
 	rid, _ := ctx.Value(ctxkey.ClientRequestID).(string)
-	m := group.Weights[id].Multiplier
+	m := qualityAccountMultiplier(group.Weights[account.ID], account)
 	if m <= 0 {
 		m = 1
 	}
-	e := AccountQualityRoutingEvent{GroupID: *g, AccountID: id, RequestID: rid, Scope: scope, Multiplier: m, Reason: reason, CreatedAt: time.Now()}
+	e := AccountQualityRoutingEvent{GroupID: *g, AccountID: account.ID, RequestID: rid, Scope: scope, Multiplier: m, Reason: reason, CreatedAt: time.Now()}
 	s.eventMu.Lock()
 	defer s.eventMu.Unlock()
 	if len(s.routeEvents) >= 512 {
@@ -320,7 +364,20 @@ func (s *AccountQualityService) RoutingPreview(ctx context.Context, g int64, sco
 	}
 	out["applied"] = true
 	out["reason"] = "ready"
-	out["weights"] = group.Weights
+	rows, err := s.repo.Rows(ctx, g, p)
+	if err != nil {
+		return nil, err
+	}
+	weights := make(map[int64]accountQualityRoutingEntry)
+	for _, row := range rows {
+		if w, exists := group.Weights[row.ID]; exists {
+			if row.ConfigVersion <= 0 || row.ConfigVersion != w.ConfigVersion {
+				w = accountQualityRoutingEntry{Multiplier: 1, ConfigVersion: row.ConfigVersion}
+			}
+			weights[row.ID] = w
+		}
+	}
+	out["weights"] = weights
 	out["snapshot_at"] = state.LoadedAt
 	out["exploration_fraction"] = .05
 	return out, nil
@@ -333,7 +390,7 @@ func (s *AccountQualityService) pickAccountLoad(ctx context.Context, g *int64, m
 	}
 	weights := make([]float64, len(accounts))
 	for i, a := range accounts {
-		m := group.Weights[a.account.ID].Multiplier
+		m := qualityAccountMultiplier(group.Weights[a.account.ID], a.account)
 		if m <= 0 {
 			m = 1
 		}
@@ -386,4 +443,11 @@ func AttachAccountQualityErrorScope(ctx context.Context, entry *OpsInsertErrorLo
 	}
 	entry.QualityServiceTier = scope.ServiceTier
 	entry.QualityScopeKnown = true
+}
+
+func qualityAccountMultiplier(w accountQualityRoutingEntry, a *Account) float64 {
+	if a == nil || a.QualityConfigVersion <= 0 || w.ConfigVersion != a.QualityConfigVersion || w.Multiplier <= 0 {
+		return 1
+	}
+	return w.Multiplier
 }
